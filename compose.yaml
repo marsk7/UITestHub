@@ -17,7 +17,8 @@ services:
       start_period: 30s
   api:
     build: .
-    image: testhub-ui:1.1-mysql
+    shm_size: 1gb
+    image: testhub-ui:1.2-mysql
     init: true
     env_file: .env
     environment: &app-env
@@ -44,7 +45,7 @@ services:
       timeout: 5s
       retries: 15
   worker:
-    image: testhub-ui:1.1-mysql
+    image: testhub-ui:1.2-mysql
     init: true
     env_file: .env
     environment:

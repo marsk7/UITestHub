@@ -4,4 +4,3 @@ data/
 *auth*.json
 playwright-report/
 test-results/
-.DS_Store

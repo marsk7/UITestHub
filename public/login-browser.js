@@ -1,0 +1,21 @@
+const $=s=>document.querySelector(s);let id=null,timer=null,queue=Promise.resolve(),drag=false,lastMove=0,ended=false;
+const project=new URLSearchParams(location.search).get('project');
+const status=t=>$('#status').textContent=t;
+async function api(path,method='GET',body){const r=await fetch('/api'+path,{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const j=await r.json();if(!r.ok)throw Object.assign(new Error(j.error||'操作失败'),{status:r.status});return j;}
+function enabled(v){for(const x of ['reload','cancel','tabs','insert','tab','enter','save'])$('#'+x).disabled=!v;$('#start').disabled=v;}
+function finish(text){ended=true;clearTimeout(timer);id=null;enabled(false);$('#screen').hidden=true;$('#screen').removeAttribute('src');$('#text').value='';$('#confirmed').checked=false;status(text);}
+async function frame(){if(!id||ended)return;try{const r=await api('/login-sessions/'+id+'/frame');if(!id||ended)return;$('#screen').src='data:image/jpeg;base64,'+r.image;$('#screen').hidden=false;$('#url').textContent=r.url;const selected=$('#tabs').value;$('#tabs').replaceChildren(...r.pages.map(p=>{const o=document.createElement('option');o.value=p.index;o.textContent=(p.index+1)+' · '+p.url;return o;}));$('#tabs').value=String(r.active??0);}catch(e){status(e.message);if([401,403,410].includes(e.status)){finish(e.message);return;}}timer=setTimeout(frame,700);}
+function input(b){const target=id;if(!target)return Promise.resolve();queue=queue.then(()=>api('/login-sessions/'+target+'/input','POST',b)).catch(e=>status(e.message));return queue;}
+$('#start').onclick=async()=>{if(!project)return status('缺少项目，请从项目与环境打开');$('#start').disabled=true;status('正在打开登录页面…');try{const r=await api('/projects/'+project+'/login-session','POST',{});id=r.id;ended=false;enabled(true);status('请在下方页面手动登录，完成后保存。');frame();}catch(e){enabled(false);status(e.message);}};
+$('#cancel').onclick=async()=>{const target=id;try{await queue;if(target)await api('/login-sessions/'+target,'DELETE');finish('会话已关闭，原登录态保持不变。');}catch(e){status(e.message);}};
+$('#save').onclick=async()=>{if(!$('#confirmed').checked)return status('请先确认已进入业务页面');$('#save').disabled=true;try{await queue;await api('/login-sessions/'+id+'/save','POST',{confirmed:true});finish('登录态已保存到项目，可以返回工作台执行测试。');}catch(e){$('#save').disabled=false;status(e.message);}};
+$('#reload').onclick=()=>input({type:'reload'});$('#tabs').onchange=e=>input({type:'tab',index:Number(e.target.value)});
+$('#insert').onclick=()=>{const text=$('#text').value;$('#text').value='';input({type:'text',text});};$('#tab').onclick=()=>input({type:'key',key:'Tab'});$('#enter').onclick=()=>input({type:'key',key:'Enter'});
+const screen=$('#screen');const point=e=>{const r=screen.getBoundingClientRect();return{x:Math.max(0,Math.min(1280,(e.clientX-r.left)*1280/r.width)),y:Math.max(0,Math.min(800,(e.clientY-r.top)*800/r.height))};};
+screen.onpointerdown=e=>{e.preventDefault();screen.focus({preventScroll:true});drag=true;screen.setPointerCapture(e.pointerId);input({type:'down',...point(e)});};
+screen.onpointermove=e=>{if(drag&&Date.now()-lastMove>45){lastMove=Date.now();input({type:'move',...point(e)});}};
+const up=e=>{if(drag){drag=false;input({type:'up',...point(e)});}};screen.onpointerup=up;screen.onpointercancel=up;
+screen.onwheel=e=>{e.preventDefault();input({type:'wheel',delta:e.deltaY});};
+screen.onkeydown=e=>{if(e.isComposing)return;let key=e.key;if((e.ctrlKey||e.metaKey)&&key.toLowerCase()==='a')key='Control+A';else if(key==='Tab'&&e.shiftKey)key='Shift+Tab';else if(e.ctrlKey||e.metaKey)return;if(['Tab','Shift+Tab','Enter','Backspace','Delete','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Escape','Control+A','Home','End'].includes(key)){e.preventDefault();input({type:'key',key});}else if(key.length===1){e.preventDefault();input({type:'text',text:key});}};
+screen.onpaste=e=>{e.preventDefault();input({type:'text',text:e.clipboardData.getData('text').slice(0,2000)});};
+window.addEventListener('pagehide',()=>{if(id)fetch('/api/login-sessions/'+id,{method:'DELETE',keepalive:true}).catch(()=>{});});

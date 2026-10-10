@@ -1,6 +1,6 @@
 {
   "name": "testhub-ui-platform",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,10 +13,12 @@
     "test": "node --test tests/*.test.mjs",
     "auth": "node scripts/save-auth.mjs",
     "db:init": "node scripts/init-db.mjs",
-    "db:migrate": "node scripts/migrate-sqlite.mjs"
+    "db:migrate": "node scripts/migrate-sqlite.mjs",
+    "test:features": "node --test checks/*.mjs"
   },
   "dependencies": {
     "@playwright/test": "1.63.0",
-    "mysql2": "3.24.5"
+    "mysql2": "3.24.5",
+    "typescript": "5.9.3"
   }
 }
