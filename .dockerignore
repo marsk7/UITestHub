@@ -4,6 +4,3 @@ data
 .git
 *auth*.json
 tests
-playwright-report/
-test-results/
-.DS_Store
