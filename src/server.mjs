@@ -1,3 +1,4 @@
+import {missingCases,retryTargets} from './suite-workflow.mjs';
 import {planManifest,confirmManifest,assertionPolicy,coverageOf} from './generation.mjs';
 import {jobDisplay} from './job-display.mjs';
 import {cases,replaceCase,selectCase} from './case-scripts.mjs';
@@ -8,7 +9,7 @@ import {readFile,writeFile,mkdir,readdir,stat,rename,rm} from 'node:fs/promises'
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
-import {DATA,query,init,replaceRecord,list,get,put,jobs,job,enqueue,now} from './db.mjs';
+import {DATA,query,init,replaceRecord,recycleRecord,suitePlan,list,get,put,jobs,job,enqueue,now} from './db.mjs';
 import {seed} from './seed.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const secret=process.env.ADMIN_PASSWORD;
@@ -32,7 +33,7 @@ function err(message,status=400){throw Object.assign(new Error(message),{status}
 function required(value,label,max=20000){if(typeof value!=='string'||!value.trim()||value.length>max)err(`${label}不能为空，且长度不能超过 ${max}`);return value.trim();}
 function projectInput(b){const baseURL=required(b.baseURL,'环境地址',2000);let u;try{u=new URL(baseURL);}catch{err('环境地址格式不正确');}if(!['http:','https:'].includes(u.protocol)||u.username||u.password)err('仅支持不含凭证的 HTTP/HTTPS 地址');if(!String(b.entry||'/').startsWith('/')||String(b.entry).startsWith('//'))err('入口路径必须以单个 / 开头');return {name:required(b.name,'项目名称',100),baseURL:u.origin,entry:String(b.entry||'/'),description:String(b.description||'').slice(0,5000)};}
 async function body(req){let s='';for await(const chunk of req){s+=chunk;if(Buffer.byteLength(s)>2_000_000)err('请求内容超过 2MB',413);}try{return JSON.parse(s||'{}');}catch{err('JSON 格式错误');}}
-async function must(id,kind){const v=await get(id,kind);if(!v)err('记录不存在',404);return v;}
+async function must(id,kind){const v=await get(id,kind);if(!v||v.deletedAt)err('记录不存在或已删除',404);return v;}
 const server=http.createServer(async(req,res)=>{
 res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');
 try{
@@ -49,9 +50,29 @@ if(p.startsWith('/api/')){
  if(!cookie||(sessions.get(cookie)||0)<Date.now())err('请先登录',401);
  if(!['GET','HEAD'].includes(m)&&req.headers.origin){if(new URL(req.headers.origin).host!==req.headers.host)err('跨站请求被拒绝',403);}
  if(p==='/api/logout'&&m==='POST'){await loginSessions.closeOwner(cookie);sessions.delete(cookie);res.setHeader('Set-Cookie','testhub=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return send(res,200,{ok:true});}
- if(p==='/api/state'&&m==='GET')return send(res,200,{projects:await list('project'),plans:await list('plan'),suites:await list('suite'),evidence:(await list('evidence')).map(({controls,tables,frames,...e})=>e),jobs:(await jobs()).map(({payload,log,...j})=>({...j,...jobDisplay(j.kind,payload)})),workers:await query('SELECT * FROM workers'),model:{configured:!!process.env.LLM_BASE_URL&&!!process.env.LLM_MODEL,model:process.env.LLM_MODEL||'',baseURL:process.env.LLM_BASE_URL||''}});
+ if(p==='/api/state'&&m==='GET'){
+ const plans=await list('plan'),suites=await list('suite');
+ return send(res,200,{projects:await list('project'),plans:plans.filter(x=>!x.deletedAt),suites:suites.filter(x=>!x.deletedAt),trash:{plans:plans.filter(x=>x.deletedAt),suites:suites.filter(x=>x.deletedAt)},evidence:(await list('evidence')).map(({controls,tables,frames,...e})=>e),jobs:(await jobs()).map(({payload,log,...j})=>({...j,...jobDisplay(j.kind,payload)})),workers:await query('SELECT * FROM workers'),model:{configured:!!process.env.LLM_BASE_URL&&!!process.env.LLM_MODEL,model:process.env.LLM_MODEL||'',baseURL:process.env.LLM_BASE_URL||''}});
+ }
  if(p==='/api/projects'&&m==='POST')return send(res,201,await put('project',{...projectInput(await body(req)),auth:false}));
  let match;
+ if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)(?:\/(restore))?$/))&&((m==='DELETE'&&!match[3])||(m==='POST'&&match[3]==='restore')))return send(res,200,await recycleRecord(match[2],match[1]==='plans'?'plan':'suite',m==='POST'));
+ if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)\/metadata$/))&&m==='PATCH'){
+ const kind=match[1]==='plans'?'plan':'suite',old=await must(match[2],kind),b=await body(req);if(b.version!==old.updated)err('记录已变化，请刷新',409);
+ return send(res,200,await replaceRecord(old.id,old.updated,{...old,name:required(b.name,'名称',100),moduleName:required(b.moduleName,'功能模块',100),purpose:required(b.purpose,'用途 / 版本说明',300)}));
+ }
+ if((match=p.match(/^\/api\/suites\/([\w-]+)\/missing$/))&&m==='GET'){
+ const suite=await must(match[1],'suite');return send(res,200,{missing:missingCases(suite),hash:codeHash(suite.code),version:suite.updated,gaps:suite.gaps||[]});
+ }
+ if((match=p.match(/^\/api\/suites\/([\w-]+)\/(complete|explore-gaps)$/))&&m==='POST'){
+ const suite=await must(match[1],'suite'),b=await body(req);if(b.baseHash!==codeHash(suite.code)||b.version!==suite.updated)err('脚本已变化，请刷新',409);
+ const targets=retryTargets(suite,b.caseIds),pr=await must(suite.projectId,'project'),plan=await suitePlan(suite);
+ const evidence=await must(b.evidenceId||suite.evidenceId,'evidence');checkEvidence(evidence,pr);
+ const {tables,...safeEvidence}=evidence;let storageState=null;if(pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
+ const kind=match[2]==='complete'?'complete-suite':'explore-gaps';
+ return send(res,202,accepted(await enqueue(kind,{projectId:pr.id,name:suite.name,suiteId:suite.id,suite,plan,project:pr,evidence:safeEvidence,manifest:targets,assertionPolicy:suite.assertionPolicy,autoExplore:b.autoExplore===true,storageState})));
+ }
+
  if((match=p.match(/^\/api\/projects\/([\w-]+)\/login-session$/))&&m==='POST')return send(res,201,await loginSessions.start(cookie,await must(match[1],'project')));
  if((match=p.match(/^\/api\/login-sessions\/([\w-]+)(?:\/(frame|input|save))?$/))){
   const id=match[1],op=match[2];loginSessions.owned(id,cookie);
@@ -83,7 +104,7 @@ if(p.startsWith('/api/')){
  const suite=await must(match[1],'suite'),b=await body(req);if(b.baseHash!==codeHash(suite.code))err('脚本已修改，请重新打开用例',409);
  const patch=replaceCase(suite.code,match[2],required(b.code,'单用例脚本',100000));
  const {code:combined,...change}=patch;const history=[...(suite.caseHistory||[]),{...change,at:now(),source:'manual-or-reviewed-ai'}].slice(-20);
- return send(res,200,await replaceRecord(suite.id,suite.updated,{...suite,code:patch.code,...(suite.manifest?{coverage:coverageOf(patch.code,suite.manifest)}:{}),caseHistory:history,approved:false,validation:null,caseValidations:{}}));
+ return send(res,200,await replaceRecord(suite.id,suite.updated,{...suite,code:patch.code,revision:(suite.revision||1)+1,...(suite.manifest?{coverage:coverageOf(patch.code,suite.manifest)}:{}),caseHistory:history,approved:false,validation:null,caseValidations:{}}));
  }
  if((match=p.match(/^\/api\/suites\/([\w-]+)\/cases\/(\d+)\/regenerate$/))&&m==='POST'){
  const suite=await must(match[1],'suite'),b=await body(req);if(b.baseHash!==codeHash(suite.code))err('脚本已修改，请刷新',409);
@@ -93,10 +114,10 @@ if(p.startsWith('/api/')){
  }
  if((match=p.match(/^\/api\/plans\/([\w-]+)\/manifest$/))&&m==='GET'){const plan=await must(match[1],'plan');return send(res,200,{manifest:planManifest(plan.content),planVersion:plan.updated});}
  if(p==='/api/plans'&&m==='POST'){const b=await body(req);await must(b.projectId,'project');return send(res,201,await put('plan',{projectId:b.projectId,name:required(b.name,'计划名称',100),requirement:String(b.requirement||''),content:required(b.content,'用例内容',100000),approved:false}));}
- if((match=p.match(/^\/api\/plans\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'plan'),b=await body(req);return send(res,200,await put('plan',{...old,name:required(b.name,'计划名称',100),content:required(b.content,'用例内容',100000),approved:false},old.id));}
+ if((match=p.match(/^\/api\/plans\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'plan'),b=await body(req);return send(res,200,await replaceRecord(old.id,old.updated,{...old,name:required(b.name,'计划名称',100),content:required(b.content,'用例内容',100000),approved:false}));}
  if(p==='/api/suites'&&m==='POST'){const b=await body(req);await must(b.projectId,'project');return send(res,201,await put('suite',{projectId:b.projectId,name:required(b.name,'脚本名称',100),code:required(b.code,'脚本',200000),approved:false}));}
- if((match=p.match(/^\/api\/suites\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'suite'),b=await body(req);return send(res,200,await put('suite',{...old,name:required(b.name,'脚本名称',100),code:required(b.code,'脚本',200000),approved:false,validation:null,caseValidations:{},gaps:[],...(old.manifest?{coverage:coverageOf(b.code,old.manifest)}:{})},old.id));}
- if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)\/approve$/))&&m==='POST'){const kind=match[1]==='plans'?'plan':'suite',old=await must(match[2],kind);if(kind==='suite'&&old.manifest&&!coverageOf(old.code,old.manifest).complete)err('用例覆盖不完整或存在重复，请补全计划中全部用例');if(kind==='suite'&&old.evidenceId){if(old.gaps?.length)err('脚本仍有未解决的缺口，请编辑修正');if(!old.validation||old.validation.status!=='passed'||old.validation.codeHash!==codeHash(old.code))err('请先让当前脚本通过试运行，再审核');const e=await must(old.evidenceId,'evidence');checkEvidence(e,await must(old.projectId,'project'));if(e.updated!==old.evidenceVersion)err('页面依据已修改，请重新生成脚本');}return send(res,200,await put(kind,{...old,approved:true,approvedAt:now()},old.id));}
+ if((match=p.match(/^\/api\/suites\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'suite'),b=await body(req);return send(res,200,await replaceRecord(old.id,old.updated,{...old,name:required(b.name,'脚本名称',100),code:required(b.code,'脚本',200000),revision:(old.revision||1)+1,approved:false,validation:null,caseValidations:{},gaps:[],...(old.manifest?{coverage:coverageOf(b.code,old.manifest)}:{})}));}
+ if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)\/approve$/))&&m==='POST'){const kind=match[1]==='plans'?'plan':'suite',old=await must(match[2],kind);if(kind==='suite'&&old.manifest&&!coverageOf(old.code,old.manifest).complete)err('用例覆盖不完整或存在重复，请补全计划中全部用例');if(kind==='suite'&&old.evidenceId){if(old.gaps?.length)err('脚本仍有未解决的缺口，请编辑修正');if(!old.validation||old.validation.status!=='passed'||old.validation.codeHash!==codeHash(old.code))err('请先让当前脚本通过试运行，再审核');const e=await must(old.evidenceId,'evidence');checkEvidence(e,await must(old.projectId,'project'));if(e.updated!==old.evidenceVersion)err('页面依据已修改，请重新生成脚本');}return send(res,200,await replaceRecord(old.id,old.updated,{...old,approved:true,approvedAt:now()}));}
  if(p==='/api/planner'&&m==='POST'){const b=await body(req),pr=await must(b.projectId,'project');return send(res,202,await enqueue('planner',{projectId:pr.id,name:required(b.name,'计划名称',100),requirement:required(b.requirement,'需求',80000),project:pr}));}
  if(p==='/api/generator'&&m==='POST'){
  const b=await body(req),plan=await must(b.planId,'plan');if(!plan.approved)err('请先审核测试计划');const pr=await must(plan.projectId,'project');
@@ -104,12 +125,13 @@ if(p.startsWith('/api/')){
  if(b.planVersion!==plan.updated)err('计划已变化，请重新打开生成窗口',409);
  const manifest=confirmManifest(b.manifestText,plan.content,b.manifestConfirmed),policy=assertionPolicy(b.assertionPolicy);
  const {tables,...safeEvidence}=evidence;
- return send(res,202,await enqueue('generator',{projectId:plan.projectId,name:plan.name,plan,project:pr,evidence:safeEvidence,manifest,assertionPolicy:policy}));
+ let storageState=null;if(b.autoExplore===true&&pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
+ return send(res,202,accepted(await enqueue('generator',{projectId:plan.projectId,name:String(b.suiteName||plan.name).slice(0,100),moduleName:plan.moduleName||plan.name,purpose:String(b.purpose||'全量生成').slice(0,300),plan,project:pr,evidence:safeEvidence,manifest,assertionPolicy:policy,autoExplore:b.autoExplore===true,storageState})));
  }
  if(p==='/api/validate'&&m==='POST'){
   const b=await body(req);if(b.confirmed!==true)err('请确认已检查脚本和试运行范围');const suite=await must(b.suiteId,'suite');if(b.caseId!==undefined&&b.baseHash!==codeHash(suite.code))err('脚本已变化，请重新选择用例',409);const pr=await must(suite.projectId,'project');
   if(suite.evidenceId){const e=await must(suite.evidenceId,'evidence');checkEvidence(e,pr);if(e.updated!==suite.evidenceVersion)err('页面依据已修改，请重新生成脚本');}
-  await put('suite',{...suite,validation:null,approved:false},suite.id);
+  await replaceRecord(suite.id,suite.updated,{...suite,validation:null,approved:false});
   let storageState=null;if(pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
   return send(res,202,accepted(await enqueue('validate',{projectId:pr.id,name:suite.name+' · 试运行',project:pr,suite,storageState,codeHash:codeHash(suite.code),...(b.caseId!==undefined?{caseId:String(b.caseId),selectedCode:selectCase(suite.code,String(b.caseId))}:{})})));
  }

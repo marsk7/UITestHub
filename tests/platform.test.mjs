@@ -32,6 +32,13 @@ test('authenticated workflow, approval gates, model jobs, queue cancellation and
  await req('/suites/'+suite.id,'PUT',{name:suite.name,code:suite.code});
  await req('/runs','POST',{suiteId:suite.id},400);
  await req('/suites/'+suite.id+'/approve','POST',{});
+ const beforeDelete=await req('/runs','POST',{suiteId:suite.id},202);
+ await req('/suites/'+suite.id,'DELETE',{},409);
+ await req('/jobs/'+beforeDelete.id+'/cancel','POST',{});
+ await req('/suites/'+suite.id,'DELETE',{});
+ let recycled=await req('/state');assert.ok(!recycled.suites.some(x=>x.id===suite.id));assert.ok(recycled.trash.suites.some(x=>x.id===suite.id));
+ await req('/runs','POST',{suiteId:suite.id},404);
+ await req('/suites/'+suite.id+'/restore','POST',{});await req('/suites/'+suite.id+'/approve','POST',{});
  const cancelled=await req('/runs','POST',{suiteId:suite.id},202);await req('/jobs/'+cancelled.id+'/cancel','POST',{});assert.equal((await req('/jobs/'+cancelled.id)).status,'cancelled');
  start('src/worker.mjs');
  async function waitJob(id){for(let i=0;i<180;i++){const j=await req('/jobs/'+id);if(!['queued','running'].includes(j.status))return j;await sleep(500);}throw new Error('Job timeout '+logs);}
@@ -44,6 +51,15 @@ test('authenticated workflow, approval gates, model jobs, queue cancellation and
  const gj=await req('/generator','POST',{planId:pid,evidenceId:eid,planVersion:inventory.planVersion,manifestText:inventory.manifest.map(x=>x.id+' '+x.title).join('\n'),manifestConfirmed:true,assertionPolicy:{mode:'business'}},202);const g=await waitJob(gj.id);assert.equal(g.status,'succeeded',g.log);
  state=await req('/state');assert.equal(state.suites.find(x=>x.id===g.result.suiteId).approved,false);
  await req('/suites/'+g.result.suiteId+'/approve','POST',{},400);
+ const generatedSuite=state.suites.find(x=>x.id===g.result.suiteId);
+ await req('/suites/'+generatedSuite.id+'/metadata','PATCH',{name:'人员查询 · 回归',moduleName:'人员管理',purpose:'补齐验收',version:generatedSuite.updated});
+ await req('/suites/'+generatedSuite.id,'PUT',{name:'人员查询 · 回归',code:"import {test,expect} from '@playwright/test';"});
+ const missing=await req('/suites/'+generatedSuite.id+'/missing');assert.equal(missing.missing.length,1);
+ await req('/suites/'+generatedSuite.id+'/complete','POST',{baseHash:'stale',version:missing.version,caseIds:['TC-01']},409);
+ const completion=await req('/suites/'+generatedSuite.id+'/complete','POST',{baseHash:missing.hash,version:missing.version,caseIds:['TC-01'],autoExplore:false},202);
+ assert.equal(completion.payload,undefined);const completed=await waitJob(completion.id);assert.equal(completed.status,'succeeded',completed.log);assert.equal(completed.result.coverage.generated,1);
+ assert.equal((await req('/suites/'+generatedSuite.id+'/missing')).missing.length,0);
+
  if(process.env.RUN_BROWSER_TESTS==='1'){
  const validation=await req('/validate','POST',{suiteId:g.result.suiteId,confirmed:true},202);assert.equal(validation.payload,undefined);const validated=await waitJob(validation.id);assert.equal(validated.status,'passed',validated.log);await req('/suites/'+g.result.suiteId+'/approve','POST',{});
  const r=await req('/runs','POST',{suiteId:suite.id},202);const run=await waitJob(r.id);assert.equal(run.status,'passed',run.log);assert.equal(run.result.passed,3);assert.equal(run.result.total,3);
