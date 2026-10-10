@@ -15,7 +15,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function freePort(){const s=http.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 test('authenticated workflow, approval gates, model jobs, queue cancellation and real browser execution',{timeout:150000},async t=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'testhub-test-')),port=await freePort(),url=`http://127.0.0.1:${port}`,password='integration-secret-123456';
- const model=http.createServer(async(req,res)=>{let b='';for await(const c of req)b+=c;const q=JSON.parse(b),system=q.messages[0].content;let text='# 测试计划\nTC01 姓名查询：输入王晓，点击查询；仅显示王晓。';if(system.includes('TypeScript'))text="import {test,expect} from '@playwright/test'; test('generated',async({page})=>{await page.goto('/demo');await expect(page.getByRole('heading')).toHaveText('人员管理');});";if(system.includes('分析师'))text='结果分析：依据已提供的实际统计，测试已完成；产品根因仍需人工确认。';if(system.includes('TypeScript'))text=JSON.stringify({code:text,gaps:[]});res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:text}}]}));});await new Promise(r=>model.listen(0,'127.0.0.1',r));
+ const model=http.createServer(async(req,res)=>{let b='';for await(const c of req)b+=c;const q=JSON.parse(b),system=q.messages[0].content;let text='# 测试计划\n### TC-01 默认页面标题';if(system.includes('TypeScript'))text="test('[TC-01] 默认页面标题',async({page})=>{await page.goto('/demo');await expect(page.getByRole('heading')).toHaveText('人员管理');});";if(system.includes('分析师'))text='结果分析：依据已提供的实际统计，测试已完成；产品根因仍需人工确认。';if(system.includes('TypeScript'))text=JSON.stringify({code:text,gaps:[]});res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:text}}]}));});await new Promise(r=>model.listen(0,'127.0.0.1',r));
  const env={...process.env,ADMIN_PASSWORD:password,PORT:String(port),DATA_DIR:dir,LLM_BASE_URL:`http://127.0.0.1:${model.address().port}/v1`,LLM_MODEL:'test-stub',DEMO_BASE_URL:url};
  const children=[];let logs='';const start=file=>{const c=spawn(process.execPath,[file],{cwd:root,env,stdio:['ignore','pipe','pipe']});c.stdout.on('data',b=>logs+=b);c.stderr.on('data',b=>logs+=b);children.push(c);return c;};start('src/server.mjs');
  t.after(async()=>{for(const c of children)c.kill('SIGTERM');await sleep(800);for(const c of children)if(c.exitCode===null)c.kill('SIGKILL');await new Promise(r=>model.close(r));await rm(dir,{recursive:true,force:true});});
@@ -40,7 +40,8 @@ test('authenticated workflow, approval gates, model jobs, queue cancellation and
  const ex=await req('/explore','POST',{projectId:project.id},202);assert.equal(ex.payload,undefined);const explored=await waitJob(ex.id);assert.equal(explored.status,'succeeded',explored.log);const eid=explored.result.evidenceId;
  await req('/generator','POST',{planId:pid,evidenceId:eid},409);
  await req('/evidence/'+eid+'/confirm','POST',{rules:'页面标题为人员管理；姓名模糊查询，重置清空条件',selectedData:'王晓，E001；仅使用演示数据'});
- const gj=await req('/generator','POST',{planId:pid,evidenceId:eid},202);const g=await waitJob(gj.id);assert.equal(g.status,'succeeded',g.log);
+ const inventory=await req('/plans/'+pid+'/manifest');
+ const gj=await req('/generator','POST',{planId:pid,evidenceId:eid,planVersion:inventory.planVersion,manifestText:inventory.manifest.map(x=>x.id+' '+x.title).join('\n'),manifestConfirmed:true,assertionPolicy:{mode:'business'}},202);const g=await waitJob(gj.id);assert.equal(g.status,'succeeded',g.log);
  state=await req('/state');assert.equal(state.suites.find(x=>x.id===g.result.suiteId).approved,false);
  await req('/suites/'+g.result.suiteId+'/approve','POST',{},400);
  if(process.env.RUN_BROWSER_TESTS==='1'){
