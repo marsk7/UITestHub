@@ -6,6 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 const root=path.resolve('.');
+if(!/^testhub_test_[a-zA-Z0-9_]+$/.test(process.env.DB_NAME||''))throw new Error('Set DB_NAME to a dedicated testhub_test_* database. Never use the application DB.');
+const {pool,query,init}=await import('../src/db.mjs');
+await init();
+for(const table of ['records','jobs','workers'])if((await query(`SELECT COUNT(*) AS n FROM ${table}`))[0].n)throw new Error('Test database must be empty.');
+await pool.end();
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function freePort(){const s=http.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 test('authenticated workflow, approval gates, model jobs, queue cancellation and real browser execution',{timeout:150000},async t=>{

@@ -1,0 +1,11 @@
+services:
+  api:
+    volumes:
+      - ./src:/app/src:ro
+      - ./public:/app/public:ro
+      - ./scripts:/app/scripts:ro
+      - ./tests:/app/tests:ro
+  worker:
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
