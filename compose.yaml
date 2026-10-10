@@ -1,0 +1,37 @@
+services:
+  api:
+    build: .
+    image: testhub-ui:1.0
+    init: true
+    env_file: .env
+    environment:
+      PORT: 8080
+      DATA_DIR: /app/data
+      DEMO_BASE_URL: http://api:8080
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    volumes:
+      - testhub-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+  worker:
+    image: testhub-ui:1.0
+    init: true
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    command: ["node", "src/worker.mjs"]
+    volumes:
+      - testhub-data:/app/data
+    shm_size: 1gb
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  testhub-data:
