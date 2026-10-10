@@ -1,3 +1,4 @@
+import {cases,replaceCase,selectCase} from './case-scripts.mjs';
 import {codeHash,checkEvidence} from './script-check.mjs';
 import {LoginSessions} from './login-sessions.mjs';
 import http from 'node:http';
@@ -5,7 +6,7 @@ import {readFile,writeFile,mkdir,readdir,stat,rename,rm} from 'node:fs/promises'
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
-import {DATA,query,init,list,get,put,jobs,job,enqueue,now} from './db.mjs';
+import {DATA,query,init,replaceRecord,list,get,put,jobs,job,enqueue,now} from './db.mjs';
 import {seed} from './seed.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const secret=process.env.ADMIN_PASSWORD;
@@ -73,6 +74,21 @@ if(p.startsWith('/api/')){
   const old=await must(match[1],'evidence'),b=await body(req),pr=await must(old.projectId,'project');checkEvidence(old,pr,false);
   return send(res,200,await put('evidence',{...old,rules:required(b.rules,'业务规则',20000),selectedData:required(b.selectedData,'确认的测试数据或数据前提',20000),notes:String(b.notes||'').slice(0,10000),confirmed:true,confirmedAt:now()},old.id));
  }
+ if((match=p.match(/^\/api\/suites\/([\w-]+)\/cases$/))&&m==='GET'){
+ const suite=await must(match[1],'suite');return send(res,200,{suiteId:suite.id,hash:codeHash(suite.code),cases:cases(suite.code)});
+ }
+ if((match=p.match(/^\/api\/suites\/([\w-]+)\/cases\/(\d+)$/))&&m==='PUT'){
+ const suite=await must(match[1],'suite'),b=await body(req);if(b.baseHash!==codeHash(suite.code))err('脚本已修改，请重新打开用例',409);
+ const patch=replaceCase(suite.code,match[2],required(b.code,'单用例脚本',100000));
+ const {code:combined,...change}=patch;const history=[...(suite.caseHistory||[]),{...change,at:now(),source:'manual-or-reviewed-ai'}].slice(-20);
+ return send(res,200,await replaceRecord(suite.id,suite.updated,{...suite,code:patch.code,caseHistory:history,approved:false,validation:null,caseValidations:{}}));
+ }
+ if((match=p.match(/^\/api\/suites\/([\w-]+)\/cases\/(\d+)\/regenerate$/))&&m==='POST'){
+ const suite=await must(match[1],'suite'),b=await body(req);if(b.baseHash!==codeHash(suite.code))err('脚本已修改，请刷新',409);
+ const target=cases(suite.code).find(c=>c.id===match[2]);if(!target)err('用例不存在',404);
+ let evidence=null;if(suite.evidenceId){evidence=await must(suite.evidenceId,'evidence');checkEvidence(evidence,await must(suite.projectId,'project'));const {tables,...safe}=evidence;evidence=safe;}
+ return send(res,202,accepted(await enqueue('regenerate-case',{projectId:suite.projectId,name:suite.name+' · '+target.title, suiteId:suite.id,baseHash:codeHash(suite.code),suiteCode:suite.code,target,instruction:required(b.instruction,'修改要求',20000),evidence})));
+ }
  if(p==='/api/plans'&&m==='POST'){const b=await body(req);await must(b.projectId,'project');return send(res,201,await put('plan',{projectId:b.projectId,name:required(b.name,'计划名称',100),requirement:String(b.requirement||''),content:required(b.content,'用例内容',100000),approved:false}));}
  if((match=p.match(/^\/api\/plans\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'plan'),b=await body(req);return send(res,200,await put('plan',{...old,name:required(b.name,'计划名称',100),content:required(b.content,'用例内容',100000),approved:false},old.id));}
  if(p==='/api/suites'&&m==='POST'){const b=await body(req);await must(b.projectId,'project');return send(res,201,await put('suite',{projectId:b.projectId,name:required(b.name,'脚本名称',100),code:required(b.code,'脚本',200000),approved:false}));}
@@ -86,11 +102,11 @@ if(p.startsWith('/api/')){
  return send(res,202,await enqueue('generator',{projectId:plan.projectId,name:plan.name,plan,project:pr,evidence:safeEvidence}));
  }
  if(p==='/api/validate'&&m==='POST'){
-  const b=await body(req);if(b.confirmed!==true)err('请确认已检查脚本和试运行范围');const suite=await must(b.suiteId,'suite');const pr=await must(suite.projectId,'project');
+  const b=await body(req);if(b.confirmed!==true)err('请确认已检查脚本和试运行范围');const suite=await must(b.suiteId,'suite');if(b.caseId!==undefined&&b.baseHash!==codeHash(suite.code))err('脚本已变化，请重新选择用例',409);const pr=await must(suite.projectId,'project');
   if(suite.evidenceId){const e=await must(suite.evidenceId,'evidence');checkEvidence(e,pr);if(e.updated!==suite.evidenceVersion)err('页面依据已修改，请重新生成脚本');}
   await put('suite',{...suite,validation:null,approved:false},suite.id);
   let storageState=null;if(pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
-  return send(res,202,accepted(await enqueue('validate',{projectId:pr.id,name:suite.name+' · 试运行',project:pr,suite,storageState,codeHash:codeHash(suite.code)})));
+  return send(res,202,accepted(await enqueue('validate',{projectId:pr.id,name:suite.name+' · 试运行',project:pr,suite,storageState,codeHash:codeHash(suite.code),...(b.caseId!==undefined?{caseId:String(b.caseId),selectedCode:selectCase(suite.code,String(b.caseId))}:{})})));
  }
  if(p==='/api/runs'&&m==='POST'){const b=await body(req),suite=await must(b.suiteId,'suite');if(!suite.approved)err('请先审核脚本，修改后需重新审核');const pr=await must(suite.projectId,'project');if(suite.evidenceId){const e=await must(suite.evidenceId,'evidence');checkEvidence(e,pr);if(e.updated!==suite.evidenceVersion)err('页面依据已修改，请重新生成脚本');}let storageState=null;if(pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
  const j=await enqueue('run',{projectId:pr.id,name:suite.name,project:pr,suite,storageState});return send(res,202,{id:j.id,status:j.status});}
