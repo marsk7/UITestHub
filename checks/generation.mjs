@@ -21,7 +21,7 @@ test('generation attempts all seven independently and passes confirmed assertion
 });
 test('malformed, blocked and wrong-case responses remain missing while later cases are generated',async()=>{
  const seen=[];const result=await generateAll(payload,{ask:async(_,p)=>{seen.push(p.target.id);if(p.target.id==='TC-02')return '{broken';if(p.target.id==='TC-03')return JSON.stringify({code:'',gaps:['缺少数据']});if(p.target.id==='TC-04')return JSON.stringify({code:codeFor(manifest[0]),gaps:[]});return JSON.stringify({code:codeFor(p.target),gaps:[]});}});
- assert.equal(seen.length,7);assert.equal(result.coverage.generated,4);assert.equal(result.coverage.complete,false);assert.equal(result.gaps.length,3);assert.equal(result.coverage.rows.at(-1).status,'generated');
+ assert.equal(new Set(seen).size,7);assert.equal(seen.length,9);assert.equal(result.coverage.generated,4);assert.equal(result.coverage.complete,false);assert.equal(result.gaps.length,3);assert.equal(result.coverage.rows.at(-1).status,'generated');
 });
 test('coverage rejects missing, duplicate and unplanned declarations',()=>{
  const code=manifest.map(codeFor).join('\n');assert.equal(coverageOf(code,manifest).complete,true);

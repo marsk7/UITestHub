@@ -1,3 +1,4 @@
+import {locatorKey} from './locator-evidence.mjs';
 import ts from 'typescript';
 import {createHash} from 'node:crypto';
 export const codeHash=code=>createHash('sha256').update(code).digest('hex');
@@ -14,7 +15,13 @@ export function checkScript(code,evidence){
     const named=options.properties.find(p=>ts.isPropertyAssignment(p)&&p.name.getText(ast)==='name');
     if(named&&ts.isStringLiteral(named.initializer)){
      const name=named.initializer.text;
-     if(!evidence.controls.some(c=>c.frameIndex===0&&c.role==='button'&&c.nameHint===name&&c.candidates.some(x=>x.expression.startsWith('getByRole(')&&x.count===1&&x.visible)))errors.push('按钮名称缺少已验证的页面依据：'+name);
+     let locator=n;const methods=new Set(['filter','locator','getByRole','getByText','getByLabel','getByPlaceholder','getByTestId']);
+     while(ts.isPropertyAccessExpression(locator.parent)&&ts.isCallExpression(locator.parent.parent)&&methods.has(locator.parent.name.text))locator=locator.parent.parent;
+     let statement=n;while(statement.parent&&!ts.isExpressionStatement(statement))statement=statement.parent;
+     const hiddenAssertion=/\.toBeHidden\s*\(/.test(statement.getText(ast));
+     const key=locatorKey(locator.getText(ast));
+     const proven=evidence.controls.some(c=>c.candidates.some(x=>x.frameVerified!==false&&x.count===1&&(x.visible||hiddenAssertion)&&locatorKey(x.expression)===key));
+     if(!proven)errors.push('按钮定位与已验证候选不一致：'+locator.getText(ast)+'；请使用证据中的完整定位表达式（含 iframe / 容器 / 可见过滤），不要仅按按钮名称匹配');
     }
    }
   }

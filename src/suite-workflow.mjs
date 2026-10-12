@@ -1,3 +1,4 @@
+import {evidenceSignature} from './locator-evidence.mjs';
 import {cases} from './case-scripts.mjs';
 import {coverageOf,generateAll} from './generation.mjs';
 import {codeHash,checkScript} from './script-check.mjs';
@@ -28,21 +29,25 @@ export function applyCompletion(suite,snapshot,result){
  const attempted=new Set(result.attemptedIds||[]);
  const prior=(suite.gaps||[]).filter(g=>!suite.manifest.some(x=>g.startsWith(x.id+' ')&&(!missing.has(x.id)||attempted.has(x.id))));
  const gaps=[...prior,...result.gaps];
- return {...suite,...merged,gaps,staticCheck:checkScript(merged.code),revision:(suite.revision||1)+(merged.code!==suite.code?1:0),approved:false,validation:null,caseValidations:{},lastGenerationAt:new Date().toISOString()};
+ return {...suite,...merged,gaps,blockers:[...(suite.blockers||[]).filter(b=>missing.has(b.id)&&!attempted.has(b.id)),...(result.blockers||[])],staticCheck:checkScript(merged.code),revision:(suite.revision||1)+(merged.code!==suite.code?1:0),approved:false,validation:null,caseValidations:{},lastGenerationAt:new Date().toISOString()};
 }
-// One bounded recovery round per task. Only missing cases are retried.
+// Bounded retries stop on success, unchanged evidence, cancellation or the round limit.
 export async function generateWithRecovery(payload,deps){
  let result=await generateAll(payload,deps),evidence=payload.evidence,exploration=null;
- const missing=result.coverage.rows.filter(x=>x.status==='missing');
- if(payload.autoExplore&&missing.length&&deps.explore){
-  await deps.progress?.('发现生成缺口，启动 Explorer 定向探索（最多 3 步，完成后仅重试缺失用例一次）…\n');
+ const history=[],limit=Math.max(1,Math.min(3,Number(payload.explorationRounds)||2));
+ for(let round=1;payload.autoExplore&&deps.explore&&round<=limit;round++){
+  const missing=result.coverage.rows.filter(x=>x.status==='missing');if(!missing.length)break;
+  if(result.blockers?.length&&result.blockers.every(x=>x.category!=='locator')){await deps.progress?.('剩余缺口属于数据、业务规则或模型格式；不重复点击页面。请按缺口补充后重试。\n');break;}
+  await deps.progress?.(`启动 Explorer 第 ${round}/${limit} 轮定向探索，再尝试缺失用例…\n`);
   try{
-   exploration=await deps.explore({targets:missing,gaps:result.gaps});
-   evidence=exploration.evidence;
-   const retry=await generateAll({...payload,manifest:missing,evidence},deps);
+   const previous=evidenceSignature(evidence);
+   exploration=await deps.explore({targets:missing,gaps:result.gaps,locatorNotes:payload.locatorNotes||'',round,maxSteps:payload.explorationSteps||6,previousActions:history.flatMap(x=>x.actions||[])});
+   evidence=exploration.evidence;history.push({evidenceId:exploration.evidenceId,actions:exploration.actions||[],recommendations:exploration.recommendations||[]});
+   const retry=await generateAll({...payload,manifest:missing,evidence,previousGaps:result.gaps},deps);
    const merged=appendMissing(result.code,retry.code,payload.manifest);
-   result={...merged,gaps:retry.gaps,staticCheck:checkScript(merged.code,evidence)};
-  }catch(e){if(await deps.cancelled?.())throw e;result.gaps.push('Explorer：'+e.message);}
+   result={...merged,gaps:retry.gaps,blockers:retry.blockers,staticCheck:checkScript(merged.code,evidence)};
+   if(previous===evidenceSignature(evidence)){await deps.progress?.('本轮没有新增或变化的定位依据，停止重复探索；仍缺失的用例保留具体原因。\n');break;}
+  }catch(e){if(await deps.cancelled?.())throw e;result.gaps.push('Explorer：'+e.message);break;}
  }
- return{...result,evidence,exploration,attemptedIds:payload.manifest.map(x=>x.id)};
+ return{...result,evidence,exploration:exploration?{...exploration,history}:null,attemptedIds:payload.manifest.map(x=>x.id)};
 }

@@ -30,9 +30,9 @@ test('automatic recovery explores once and retries only the blocked case',async(
  });
  assert.deepEqual(calls,['TC-01','TC-02','TC-02']);assert.equal(count,1);assert.equal(result.coverage.complete,true);assert.equal(result.evidence.id,'new');
 });
-test('unresolved recovery terminates with missing case and original successful code',async()=>{
+test('data or permission gaps do not trigger futile browser exploration',async()=>{
  let count=0;const result=await generateWithRecovery({manifest:manifest.slice(0,2),evidence:{controls:[]},autoExplore:true},{ask:async(_,p)=>JSON.stringify(p.target.id==='TC-02'?{code:'',gaps:['账号无权限']}:{code:block(p.target),gaps:[]}),explore:async()=>{count++;return{evidence:{controls:[]}};}});
- assert.equal(count,1);assert.equal(result.coverage.generated,1);assert.equal(result.gaps.length,1);assert.ok(result.code.includes('[TC-01]'));
+ assert.equal(count,0);assert.equal(result.coverage.generated,1);assert.equal(result.gaps.length,1);assert.ok(result.code.includes('[TC-01]'));
 });
 test('Explorer observes real hidden control, records prerequisite, and rejects invented destructive action',{timeout:30000},async()=>{
  let submitted=0;const server=http.createServer((req,res)=>{if(req.url==='/delete'){submitted++;res.end('bad');return;}res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<html><body><button aria-expanded="false" onclick="document.querySelector('#hidden').hidden=false;this.setAttribute('aria-expanded','true')">展开查询</button><button onclick="fetch('/delete')">删除</button><div id="hidden" hidden><label>工号<input id="staff"></label></div></body></html>`);});

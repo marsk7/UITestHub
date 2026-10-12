@@ -1,0 +1,19 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {chromium} from '@playwright/test';
+test('task UI opens online report and previews screenshot and escaped text',{timeout:30000},async()=>{
+ const job={id:'run1',kind:'run',projectId:'p',name:'人员查询',created:new Date().toISOString(),status:'failed',result:{total:1,failed:1,passed:0,skipped:0,duration:10},log:'fixture'};
+ const state={projects:[{id:'p',name:'GCS'}],plans:[],suites:[],jobs:[job],workers:[],model:{configured:true}};
+ const files=[{name:'html-report/index.html',kind:'text',size:100},{name:'test-results/失败截图.png',kind:'image',size:10},{name:'summary.json',kind:'text',size:20}];
+ const server=http.createServer(async(req,res)=>{const u=new URL(req.url,'http://localhost');try{
+ if(u.pathname==='/api/state'||u.pathname==='/api/jobs/run1'||u.pathname==='/api/jobs/run1/artifacts'){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(u.pathname==='/api/state'?state:u.pathname.endsWith('/artifacts')?files:job));}
+ if(u.pathname.endsWith('/preview')){if(u.searchParams.get('file').endsWith('.png')){res.setHeader('Content-Type','image/png');return res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jVhUAAAAASUVORK5CYII=','base64'));}res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({text:'<script>window.pwned=true</script>'}));}
+ const file={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/favicon.svg':'favicon.svg'}[u.pathname];res.setHeader('Content-Type',u.pathname.endsWith('.js')?'text/javascript':u.pathname.endsWith('.css')?'text/css':'text/html');res.end(await readFile('public/'+file));
+ }catch(e){res.statusCode=500;res.end(e.message);}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE_PATH?{executablePath:process.env.BROWSER_EXECUTABLE_PATH,args:['--no-zygote','--disable-gpu']}:{})});
+ try{const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('http://127.0.0.1:'+server.address().port);await page.getByRole('button',{name:'执行中心',exact:true}).click();await page.getByRole('button',{name:'查看',exact:true}).click();assert.equal(await page.getByRole('link',{name:'在线打开 HTML 报告'}).getAttribute('href'),'/report?job=run1');
+ await page.locator('.kv').filter({hasText:'失败截图.png'}).getByRole('button',{name:'预览'}).click();await page.getByRole('img',{name:'测试截图'}).waitFor();await page.getByRole('button',{name:'返回任务'}).click();await page.locator('.kv').filter({hasText:'summary.json'}).getByRole('button',{name:'预览'}).click();assert.match(await page.locator('.artifact-text').innerText(),/window.pwned/);assert.equal(await page.evaluate(()=>window.pwned),undefined);assert.deepEqual(errors,[]);
+ }finally{await browser.close();await new Promise(r=>server.close(r));}
+});
