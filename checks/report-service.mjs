@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import {mkdtemp,mkdir,writeFile,readFile,symlink,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,symlink,rm,cp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
@@ -27,6 +27,9 @@ test('online native Playwright report, attachments, ranges and access isolation'
  let browser;
  try{
   assert.equal((await fetch(base+'/api/jobs/job/report-link',{method:'POST'})).status,401);
+  await cp(path.join(dir,'html-report'),path.join(dir,'verify-TC-01','html-report'),{recursive:true});
+  const nested=await service.issue('job','owner','verify-TC-01/html-report');assert.equal((await fetch(base+nested.url)).status,200);
+  await assert.rejects(service.issue('job','owner','../html-report'),/不允许/);
   const link=await service.issue('job','owner'),r=await fetch(base+link.url);assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/sandbox allow-scripts/);assert.ok(!r.headers.get('content-security-policy').includes('allow-same-origin'));
   assert.equal((await fetch(base+link.url.replace('index.html','storage.json'))).status,404);
   await assert.rejects(artifactPath(dir,'../storage.json'));await assert.rejects(artifactPath(dir,'leak.txt'));await assert.rejects(artifactPath(dir,'storage.json'));

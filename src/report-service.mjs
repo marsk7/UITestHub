@@ -27,7 +27,7 @@ export async function listArtifacts(root){
 }
 export async function sendArtifact(req,res,root,name,{inline=false,report=false}={}){
  const {file,stat}=await artifactPath(root,name),ext=path.extname(name).toLowerCase(),kind=artifactKind(name);
- if(report&&name==='html-report/index.html'){
+ if(report&&name.endsWith('/index.html')){
   const original=await readFile(file,'utf8'),html=/<head\b[^>]*>/i.test(original)?original.replace(/<head\b[^>]*>/i,head=>head+reportStorageShim):reportStorageShim+original;
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Length':Buffer.byteLength(html)});return res.end(req.method==='HEAD'?undefined:html);
  }
@@ -52,10 +52,11 @@ export async function sendArtifact(req,res,root,name,{inline=false,report=false}
 export function createReportService({data,ownerActive,ttl=30*60*1000}){
  const grants=new Map();
  return{
-  async issue(jobId,owner){
-   const root=path.join(data,'runs',jobId);await artifactPath(root,'html-report/index.html');
+  async issue(jobId,owner,reportPath='html-report'){
+   if(typeof reportPath!=='string'||! /^(?:verify-(?:TC|CASE)[-_]\d+\/)?html-report$/.test(reportPath))fail('报告路径不允许',403);
+   const root=path.join(data,'runs',jobId);await artifactPath(root,reportPath+'/index.html');
    for(const [key,g]of grants)if(g.expiresAt<=Date.now()||!ownerActive(g.owner))grants.delete(key);
-   const token=randomBytes(32).toString('hex'),expiresAt=Date.now()+ttl;grants.set(token,{jobId,owner,expiresAt});
+   const token=randomBytes(32).toString('hex'),expiresAt=Date.now()+ttl;grants.set(token,{jobId,owner,expiresAt,reportPath});
    return{url:`/report-assets/${token}/index.html`,expiresAt};
   },
   async handle(req,res,u){
@@ -68,11 +69,11 @@ export function createReportService({data,ownerActive,ttl=30*60*1000}){
    let name;try{name=decodeURIComponent(m[2]);}catch{fail('文件路径不允许',403);}
    // The trace UI needs service workers and an origin. Keep it isolated and offer its ZIP here.
    if(name==='trace/index.html'){
-    const links=[];for(const raw of u.searchParams.getAll('trace')){try{const trace=new URL(raw,'http://'+req.headers.host);const prefix='/report-assets/'+m[1]+'/';if(trace.host!==req.headers.host||!trace.pathname.startsWith(prefix))continue;const relative=decodeURIComponent(trace.pathname.slice(prefix.length));if(!relative.startsWith('data/')||!relative.endsWith('.zip'))continue;await artifactPath(path.join(data,'runs',grant.jobId),'html-report/'+relative);links.push(`<a href="${prefix+relative.split('/').map(encodeURIComponent).join('/')}" download>下载 Trace ZIP</a>`);}catch{}}
+    const links=[];for(const raw of u.searchParams.getAll('trace')){try{const trace=new URL(raw,'http://'+req.headers.host);const prefix='/report-assets/'+m[1]+'/';if(trace.host!==req.headers.host||!trace.pathname.startsWith(prefix))continue;const relative=decodeURIComponent(trace.pathname.slice(prefix.length));if(!relative.startsWith('data/')||!relative.endsWith('.zip'))continue;await artifactPath(path.join(data,'runs',grant.jobId),grant.reportPath+'/'+relative);links.push(`<a href="${prefix+relative.split('/').map(encodeURIComponent).join('/')}" download>下载 Trace ZIP</a>`);}catch{}}
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});res.end('<!doctype html><meta charset="utf-8"><p>截图、视频和错误详情可直接在报告查看。Trace 时间线暂保留下载查看。</p>'+links.join('<br>'));return true;
    }
    if(name!=='index.html'&&name!=='report.js'&&name!=='report.css'&&!name.startsWith('data/'))fail('报告资源不存在');
-   await sendArtifact(req,res,path.join(data,'runs',grant.jobId),'html-report/'+name,{report:true});return true;
+   await sendArtifact(req,res,path.join(data,'runs',grant.jobId),grant.reportPath+'/'+name,{report:true});return true;
   }
  };
 }

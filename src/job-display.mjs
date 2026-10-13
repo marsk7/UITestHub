@@ -8,5 +8,6 @@ export function jobDisplay(kind,p={}){
   else{displayType=kind==='validate'?'整组脚本试运行':'整组脚本正式执行';scopeLabel=caseCount===null?'整组 · 数量未知':`整组 · ${caseCount} 条用例`;}
  }else if(['generator','complete-suite','explore-gaps'].includes(kind)){caseCount=p.manifest?.length??null;scopeLabel=caseCount===null?'历史任务 · 覆盖数量未知':`${kind==='generator'?'全部':'目标'} ${caseCount} 条用例：${(p.manifest||[]).map(x=>x.id).join('、')}`;}
  else if(kind==='regenerate-case'){caseCount=1;caseTitle=p.target?.title||'';scopeLabel=caseTitle;}
+ if(p.liveValidation&&['generator','complete-suite'].includes(kind))displayType+=' + 逐用例浏览器验证';
  return{displayType,scopeLabel,caseCount,caseTitle,name:`${displayType} · ${p.suite?.name||p.name||'未命名'}${scopeLabel?' · '+scopeLabel:''}`,projectId:p.projectId};
 }

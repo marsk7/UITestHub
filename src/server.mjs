@@ -1,3 +1,4 @@
+import {verificationSettings} from './generation-verifier.mjs';
 import {createReportService,listArtifacts,sendArtifact} from './report-service.mjs';
 import {missingCases,retryTargets} from './suite-workflow.mjs';
 import {planManifest,confirmManifest,assertionPolicy,coverageOf} from './generation.mjs';
@@ -33,7 +34,7 @@ const accepted=j=>({id:j.id,status:j.status,kind:j.kind});
 function send(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
 function err(message,status=400){throw Object.assign(new Error(message),{status});}
 function required(value,label,max=20000){if(typeof value!=='string'||!value.trim()||value.length>max)err(`${label}不能为空，且长度不能超过 ${max}`);return value.trim();}
-function explorationSettings(b){return{locatorNotes:String(b.locatorNotes||'').slice(0,10000),explorationSteps:Math.max(1,Math.min(8,Math.trunc(Number(b.explorationSteps)||6))),explorationRounds:Math.max(1,Math.min(3,Math.trunc(Number(b.explorationRounds)||2)))};}
+function explorationSettings(b){return{...verificationSettings(b),locatorNotes:String(b.locatorNotes||'').slice(0,10000),explorationSteps:Math.max(1,Math.min(8,Math.trunc(Number(b.explorationSteps)||6))),explorationRounds:Math.max(1,Math.min(3,Math.trunc(Number(b.explorationRounds)||2)))};}
 function projectInput(b){const baseURL=required(b.baseURL,'环境地址',2000);let u;try{u=new URL(baseURL);}catch{err('环境地址格式不正确');}if(!['http:','https:'].includes(u.protocol)||u.username||u.password)err('仅支持不含凭证的 HTTP/HTTPS 地址');if(!String(b.entry||'/').startsWith('/')||String(b.entry).startsWith('//'))err('入口路径必须以单个 / 开头');return {name:required(b.name,'项目名称',100),baseURL:u.origin,entry:String(b.entry||'/'),description:String(b.description||'').slice(0,5000)};}
 async function body(req){let s='';for await(const chunk of req){s+=chunk;if(Buffer.byteLength(s)>2_000_000)err('请求内容超过 2MB',413);}try{return JSON.parse(s||'{}');}catch{err('JSON 格式错误');}}
 async function must(id,kind){const v=await get(id,kind);if(!v||v.deletedAt)err('记录不存在或已删除',404);return v;}
@@ -108,19 +109,21 @@ if(p.startsWith('/api/')){
  const suite=await must(match[1],'suite'),b=await body(req);if(b.baseHash!==codeHash(suite.code))err('脚本已修改，请重新打开用例',409);
  const patch=replaceCase(suite.code,match[2],required(b.code,'单用例脚本',100000));
  const {code:combined,...change}=patch;const history=[...(suite.caseHistory||[]),{...change,at:now(),source:'manual-or-reviewed-ai'}].slice(-20);
- return send(res,200,await replaceRecord(suite.id,suite.updated,{...suite,code:patch.code,revision:(suite.revision||1)+1,...(suite.manifest?{coverage:coverageOf(patch.code,suite.manifest)}:{}),caseHistory:history,approved:false,validation:null,caseValidations:{}}));
+ return send(res,200,await replaceRecord(suite.id,suite.updated,{...suite,code:patch.code,generationVerification:null,revision:(suite.revision||1)+1,...(suite.manifest?{coverage:coverageOf(patch.code,suite.manifest)}:{}),caseHistory:history,approved:false,validation:null,caseValidations:{}}));
  }
  if((match=p.match(/^\/api\/suites\/([\w-]+)\/cases\/(\d+)\/regenerate$/))&&m==='POST'){
  const suite=await must(match[1],'suite'),b=await body(req);if(b.baseHash!==codeHash(suite.code))err('脚本已修改，请刷新',409);
  const target=cases(suite.code).find(c=>c.id===match[2]);if(!target)err('用例不存在',404);
  let evidence=null;if(suite.evidenceId){evidence=await must(suite.evidenceId,'evidence');checkEvidence(evidence,await must(suite.projectId,'project'));const {tables,...safe}=evidence;evidence=safe;}
- return send(res,202,accepted(await enqueue('regenerate-case',{projectId:suite.projectId,name:suite.name+' · '+target.title, suiteId:suite.id,baseHash:codeHash(suite.code),suiteCode:suite.code,assertionPolicy:suite.assertionPolicy,target,instruction:required(b.instruction,'修改要求',20000),evidence})));
+ const verification=(suite.generationVerification?.rows||[]).find(r=>target.title===`[${r.id}] ${r.title}`);
+ if(verification?.diagnosticEvidenceId){const diagnostic=await must(verification.diagnosticEvidenceId,'evidence');checkEvidence(diagnostic,await must(suite.projectId,'project'));evidence=diagnostic;}
+ return send(res,202,accepted(await enqueue('regenerate-case',{projectId:suite.projectId,name:suite.name+' · '+target.title, suiteId:suite.id,baseHash:codeHash(suite.code),suiteCode:suite.code,assertionPolicy:suite.assertionPolicy,target,runtimeFeedback:verification?{category:verification.category,errors:verification.errors,steps:verification.steps,snapshot:verification.snapshot,recommendations:verification.recommendations}:null,instruction:required(b.instruction,'修改要求',20000),evidence})));
  }
  if((match=p.match(/^\/api\/plans\/([\w-]+)\/manifest$/))&&m==='GET'){const plan=await must(match[1],'plan');return send(res,200,{manifest:planManifest(plan.content),planVersion:plan.updated});}
  if(p==='/api/plans'&&m==='POST'){const b=await body(req);await must(b.projectId,'project');return send(res,201,await put('plan',{projectId:b.projectId,name:required(b.name,'计划名称',100),requirement:String(b.requirement||''),content:required(b.content,'用例内容',100000),approved:false}));}
  if((match=p.match(/^\/api\/plans\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'plan'),b=await body(req);return send(res,200,await replaceRecord(old.id,old.updated,{...old,name:required(b.name,'计划名称',100),content:required(b.content,'用例内容',100000),approved:false}));}
  if(p==='/api/suites'&&m==='POST'){const b=await body(req);await must(b.projectId,'project');return send(res,201,await put('suite',{projectId:b.projectId,name:required(b.name,'脚本名称',100),code:required(b.code,'脚本',200000),approved:false}));}
- if((match=p.match(/^\/api\/suites\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'suite'),b=await body(req);return send(res,200,await replaceRecord(old.id,old.updated,{...old,name:required(b.name,'脚本名称',100),code:required(b.code,'脚本',200000),revision:(old.revision||1)+1,approved:false,validation:null,caseValidations:{},gaps:[],...(old.manifest?{coverage:coverageOf(b.code,old.manifest)}:{})}));}
+ if((match=p.match(/^\/api\/suites\/([\w-]+)$/))&&m==='PUT'){const old=await must(match[1],'suite'),b=await body(req);return send(res,200,await replaceRecord(old.id,old.updated,{...old,name:required(b.name,'脚本名称',100),code:required(b.code,'脚本',200000),generationVerification:null,revision:(old.revision||1)+1,approved:false,validation:null,caseValidations:{},gaps:[],...(old.manifest?{coverage:coverageOf(b.code,old.manifest)}:{})}));}
  if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)\/approve$/))&&m==='POST'){const kind=match[1]==='plans'?'plan':'suite',old=await must(match[2],kind);if(kind==='suite'&&old.manifest&&!coverageOf(old.code,old.manifest).complete)err('用例覆盖不完整或存在重复，请补全计划中全部用例');if(kind==='suite'&&old.evidenceId){if(old.gaps?.length)err('脚本仍有未解决的缺口，请编辑修正');if(!old.validation||old.validation.status!=='passed'||old.validation.codeHash!==codeHash(old.code))err('请先让当前脚本通过试运行，再审核');const e=await must(old.evidenceId,'evidence');checkEvidence(e,await must(old.projectId,'project'));if(e.updated!==old.evidenceVersion)err('页面依据已修改，请重新生成脚本');}return send(res,200,await replaceRecord(old.id,old.updated,{...old,approved:true,approvedAt:now()}));}
  if(p==='/api/planner'&&m==='POST'){const b=await body(req),pr=await must(b.projectId,'project');return send(res,202,await enqueue('planner',{projectId:pr.id,name:required(b.name,'计划名称',100),requirement:required(b.requirement,'需求',80000),project:pr}));}
  if(p==='/api/generator'&&m==='POST'){
@@ -129,7 +132,7 @@ if(p.startsWith('/api/')){
  if(b.planVersion!==plan.updated)err('计划已变化，请重新打开生成窗口',409);
  const manifest=confirmManifest(b.manifestText,plan.content,b.manifestConfirmed),policy=assertionPolicy(b.assertionPolicy);
  const {tables,...safeEvidence}=evidence;
- let storageState=null;if(b.autoExplore===true&&pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
+ let storageState=null;if((b.autoExplore===true||b.liveValidation===true)&&pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
  return send(res,202,accepted(await enqueue('generator',{projectId:plan.projectId,name:String(b.suiteName||plan.name).slice(0,100),moduleName:plan.moduleName||plan.name,purpose:String(b.purpose||'全量生成').slice(0,300),plan,project:pr,evidence:safeEvidence,manifest,assertionPolicy:policy,autoExplore:b.autoExplore===true,...explorationSettings(b),storageState})));
  }
  if(p==='/api/validate'&&m==='POST'){
@@ -141,10 +144,10 @@ if(p.startsWith('/api/')){
  }
  if(p==='/api/runs'&&m==='POST'){const b=await body(req),suite=await must(b.suiteId,'suite');if(!suite.approved)err('请先审核脚本，修改后需重新审核');const pr=await must(suite.projectId,'project');if(suite.evidenceId){const e=await must(suite.evidenceId,'evidence');checkEvidence(e,pr);if(e.updated!==suite.evidenceVersion)err('页面依据已修改，请重新生成脚本');}let storageState=null;if(pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
  const j=await enqueue('run',{projectId:pr.id,name:suite.name,project:pr,suite,storageState});return send(res,202,{id:j.id,status:j.status});}
- if((match=p.match(/^\/api\/jobs\/([\w-]+)$/))&&m==='GET'){const j=await job(match[1]);if(!j)err('任务不存在',404);const{payload,...safe}=j;return send(res,200,{...safe,...jobDisplay(j.kind,payload)});}
+ if((match=p.match(/^\/api\/jobs\/([\w-]+)$/))&&m==='GET'){const j=await job(match[1]);if(!j)err('任务不存在',404);const{payload,...safe}=j;if(['generator','complete-suite'].includes(j.kind)&&!safe.result){try{safe.result={generationVerification:JSON.parse(await readFile(path.join(DATA,'runs',j.id,'generation-progress.json'),'utf8'))};}catch{}}return send(res,200,{...safe,...jobDisplay(j.kind,payload)});}
  if((match=p.match(/^\/api\/jobs\/([\w-]+)\/cancel$/))&&m==='POST'){await query("UPDATE jobs SET payload=JSON_REMOVE(payload,'$.storageState'),cancel=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated=? WHERE id=? AND status IN ('queued','running')",[now(),match[1]]);return send(res,200,{ok:true});}
  if((match=p.match(/^\/api\/jobs\/([\w-]+)\/analyze$/))&&m==='POST'){const j=await job(match[1]);if(!j||!['run','validate'].includes(j.kind)||!['passed','failed','error','interrupted'].includes(j.status))err('该执行结果暂不可分析');return send(res,202,await enqueue('reporter',{projectId:j.payload.projectId,name:j.payload.name,runId:j.id,summary:j.result,log:j.log}));}
- if((match=p.match(/^\/api\/jobs\/([\w-]+)\/report-link$/))&&m==='POST'){if(!(await job(match[1])))err('任务不存在',404);return send(res,200,await reports.issue(match[1],cookie));}
+ if((match=p.match(/^\/api\/jobs\/([\w-]+)\/report-link$/))&&m==='POST'){if(!(await job(match[1])))err('任务不存在',404);return send(res,200,await reports.issue(match[1],cookie,(await body(req)).reportPath||'html-report'));}
  if((match=p.match(/^\/api\/jobs\/([\w-]+)\/artifacts$/))&&m==='GET'){if(!(await job(match[1])))err('任务不存在',404);return send(res,200,await listArtifacts(path.join(DATA,'runs',match[1])));}
  if((match=p.match(/^\/api\/jobs\/([\w-]+)\/(download|preview)$/))&&['GET','HEAD'].includes(m)){if(!(await job(match[1])))err('任务不存在',404);return await sendArtifact(req,res,path.join(DATA,'runs',match[1]),u.searchParams.get('file')||'',{inline:match[2]==='preview'});}
  err('接口不存在',404);

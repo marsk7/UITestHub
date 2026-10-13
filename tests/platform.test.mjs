@@ -48,7 +48,10 @@ test('authenticated workflow, approval gates, model jobs, queue cancellation and
  await req('/generator','POST',{planId:pid,evidenceId:eid},409);
  await req('/evidence/'+eid+'/confirm','POST',{rules:'页面标题为人员管理；姓名模糊查询，重置清空条件',selectedData:'王晓，E001；仅使用演示数据'});
  const inventory=await req('/plans/'+pid+'/manifest');
- const gj=await req('/generator','POST',{planId:pid,evidenceId:eid,planVersion:inventory.planVersion,manifestText:inventory.manifest.map(x=>x.id+' '+x.title).join('\n'),manifestConfirmed:true,assertionPolicy:{mode:'business'}},202);const g=await waitJob(gj.id);assert.equal(g.status,'succeeded',g.log);
+ const generationRequest={planId:pid,evidenceId:eid,planVersion:inventory.planVersion,manifestText:inventory.manifest.map(x=>x.id+' '+x.title).join('\n'),manifestConfirmed:true,assertionPolicy:{mode:'business'}};
+ await req('/generator','POST',{...generationRequest,liveValidation:true},400);
+ const gj=await req('/generator','POST',{...generationRequest,liveValidation:process.env.RUN_BROWSER_TESTS==='1',executionConfirmed:true},202);const g=await waitJob(gj.id);assert.equal(g.status,'succeeded',g.log);
+ if(process.env.RUN_BROWSER_TESTS==='1'){assert.equal(g.result.generationVerification.summary.passed,1);const nested=await req('/jobs/'+g.id+'/report-link','POST',{reportPath:'verify-TC-01/html-report'});assert.equal((await fetch(url+nested.url)).status,200);}
  state=await req('/state');assert.equal(state.suites.find(x=>x.id===g.result.suiteId).approved,false);
  await req('/suites/'+g.result.suiteId+'/approve','POST',{},400);
  const generatedSuite=state.suites.find(x=>x.id===g.result.suiteId);
