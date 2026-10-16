@@ -34,17 +34,18 @@ export async function frameSelectors(frame){
  for(const selector of choices)if(await parent.locator(selector).count()===1)return [...prefix,selector];
  return null;
 }
-export function evidenceSignature(e){return JSON.stringify((e.controls||[]).map(c=>[c.framePath,c.nameHint,c.visible,c.candidates.filter(x=>x.count===1).map(x=>[x.expression,x.visible])]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));}
+export function evidenceSignature(e){return JSON.stringify({controls:(e.controls||[]).map(c=>[c.framePath,c.nameHint,c.kind,c.value,c.scrollTop,c.candidates.map(x=>[x.expression,x.count,x.visibleCount,x.visible])]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),tables:e.tables||[]});}
 export function compactEvidence(e){
- if(!e)return e;const {tables,...rest}=e,seen=new Map();
+ if(!e)return e;const seen=new Map();
  for(const c of e.controls||[]){
-  const proven=c.candidates.filter(x=>x.count===1&&x.frameVerified!==false);
-  const candidates=(proven.length?proven:c.candidates.slice(0,1)).map(({expression,count,visible,frameVerified})=>({expression,count,visible,frameVerified}));
-  const value={observedAt:c.observedAt,sourceEvidenceId:c.sourceEvidenceId,tag:c.tag,role:c.role,nameHint:c.nameHint,label:c.label,contextLabel:c.contextLabel,placeholder:c.placeholder,visible:c.visible,usable:c.usable,framePath:c.framePath,stateId:c.stateId,prerequisites:c.prerequisites||[],candidates,...(c.options?{options:c.options}:{})};
-  const key=JSON.stringify([c.framePath,c.nameHint,c.contextLabel,c.visible,candidates]);
+  const proven=c.candidates.filter(x=>x.frameVerified!==false&&(x.count===1||x.kind==='collection'));
+  const candidates=(proven.length?proven:c.candidates.slice(0,1)).map(({expression,count,visibleCount,visible,frameVerified,kind})=>({expression,count,visibleCount,visible,frameVerified,kind}));
+  const {candidates:ignored,...details}=c;
+  const value={...details,candidates,prerequisites:c.prerequisites||[]};
+  const key=JSON.stringify([c.framePath,c.nameHint,c.contextLabel,c.kind,c.visible,candidates]);
   if(!seen.has(key)||seen.get(key).prerequisites.length>value.prerequisites.length)seen.set(key,value);
  }
- return{...rest,controls:[...seen.values()]};
+ return{...e,controls:[...seen.values()]};
 }
 
 // Preserve replayable prerequisite paths from earlier observations, with provenance.
@@ -58,5 +59,6 @@ export function mergeEvidence(previous,current){
   const key=JSON.stringify([c.framePath,c.nameHint,c.contextLabel,c.prerequisites||[],c.candidates.map(x=>locatorKey(x.expression))]);
   seen.set(key,value);
  }
- return {...current,controls:[...seen.values()].slice(-3000)};
+ const structures=new Map();for(const source of [previous,current])for(const t of source.tables||[])structures.set(JSON.stringify([t.framePath,t.selector||t.container?.expression,t.prerequisites||[]]),t);
+ return {...current,controls:[...seen.values()].slice(-3000),tables:[...structures.values()].slice(-100)};
 }

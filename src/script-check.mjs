@@ -25,6 +25,11 @@ export function checkScript(code,evidence){
     }
    }
   }
+  if(evidence&&ts.isCallExpression(n)&&ts.isPropertyAccessExpression(n.expression)&&['click','dblclick','fill','selectOption','check','uncheck'].includes(n.expression.name.text)){
+   const key=locatorKey(n.expression.expression.getText(ast));
+   const known=(evidence.controls||[]).flatMap(c=>(c.candidates||[]).map(x=>({...x,disabled:c.disabled}))).filter(x=>locatorKey(x.expression)===key);
+   if(known.length&&!known.some(x=>x.kind!=='collection'&&x.count===1&&x.visible&&x.frameVerified!==false&&!x.disabled))errors.push('交互定位不是唯一可见且启用的单元素候选：'+n.expression.expression.getText(ast));
+  }
   if(ts.isCallExpression(n)){const x=n.expression.getText(ast);if(n.expression.kind===ts.SyntaxKind.ImportKeyword)errors.push('禁止动态 import');if(x==='test')tests++;if(['test.skip','test.fixme','test.only'].includes(x))errors.push('存在跳过、待修复或独占用例');if(x.endsWith('.waitForTimeout'))errors.push('请用可重试断言替代固定等待');}
   ts.forEachChild(n,walk);
  }walk(ast);if(!tests)errors.push('未找到 test() 用例');return{ok:errors.length===0,errors:[...new Set(errors)],tests,codeHash:codeHash(code)};

@@ -61,7 +61,7 @@ async function targetedExplore(j,goals){
  if(controller.signal.aborted)throw new Error('Explorer 已取消或超时');
  const base=j.payload.evidence;
  const saved=await put('evidence',{...mergeEvidence(priorEvidence||j.payload.evidence,result),jobId:j.id,artifactPrefix,parentEvidenceId:base.id,rules:base.rules,selectedData:base.selectedData,notes:base.notes,confirmed:true,confirmedAt:base.confirmedAt,confirmationSource:'继承已确认业务规则与测试数据；仅更新浏览器实测定位依据'});
- const {tables,...safe}=saved;
+ const safe=saved;
  await log(j.id,'Explorer 实际操作：'+(saved.actions.join(' → ')||'仅观察')+'\n建议（待验证）：'+(saved.recommendations.join('；')||'请检查定位依据与账号权限')+'\n');
  return{evidence:safe,evidenceId:saved.id,actions:saved.actions,recommendations:saved.recommendations,warnings:saved.warnings};
  }finally{clearTimeout(timer);clearInterval(cancel);}

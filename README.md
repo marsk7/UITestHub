@@ -1,8 +1,29 @@
-# TestHub 1.3.1
+# TestHub 1.3.2
 
 TestHub 是面向可信内部测试团队的 UI 自动化平台：需求/PRD → 测试计划 → 页面采集 → 模块与用例脚本 → Playwright 执行 → 在线报告与修复。前端为原生 JavaScript，API/Worker 为 Node.js ESM，脚本使用 TypeScript，数据存储于 MySQL 8.4，浏览器使用 Chromium。
 
-## 1. 1.3.1 的变化
+**版本口径：原 1.2.6 更名为 1.3.0，本次版本为 1.3.2。** 本文是统一使用、部署、升级与维护文档，已合并此前各 UPDATE 文档；旧文件仅保留指向本文的入口。
+
+## 1. 1.3.2 的变化
+
+本次以 1.3.1 为基线，保留注册、项目所有者和数据权限等已有功能。源码增量包用于覆盖现有项目，不含原部署文件、`.env`、数据卷和依赖目录；无新增依赖、数据库表或迁移。
+
+1. Ant Select 同时记录隐藏辅助 option 和实际可见弹层中的选项；补充选中值回显、弹层所属字段、前置状态。定向探索可在已观察到的搜索输入中搜索缺口明确提到的目标选项，并在最多 3 次、总动作预算内滚动虚拟列表；不选择业务值或提交查询。
+2. 采集表格容器、数据行集合、表头及列映射；复杂合并表头无法可靠映射时不猜列号。每张表仍只保留前三行文本样本，同时独立记录可见行数。样本不能代表总数。
+3. 采集分页原始摘要、可识别格式的总数、当前页、下一页/上一页及禁用状态、每页条数载体；解析不了的总数明确为未知。不自动翻页或修改 pageSize。
+4. 候选分开记录 count 与 visibleCount；集合允许多匹配，点击仍要求唯一、可见且启用。空结果不能替代正向有数据用例；生成器收到完整表格结构，自动探索合并后也保留。
+5. `liveValidation=false` 和探索建议不会成为额外业务禁令；缺少数据或规则仍报告缺口，不能删除业务断言来补齐脚本。
+6. 测试计划“标注 / 重命名”“删除”“单用例管理”放入“查看 / 编辑”。单用例管理识别独立 Markdown 标题（如 `### TC-01 查询`），只编辑该段，保存后需重审；不支持自动拆分的表格计划继续全文编辑。保存带版本检查，拒绝覆盖已改变的计划。已有脚本模块保留原计划快照。
+
+### 升级后如何处理 TC-02 / TC-04 / TC-07
+
+保留原业务规则和 selectedData，在模块“查看 / 编辑 → 单用例管理”或“生成模块脚本”中选择缺失用例，开启自动 Explorer 补齐。老证据可继续使用，但没有真实选项/表格结构时必须让 Explorer 补充或在“页面采集与依据”更新；无需人工逐个填写选择器。登录态过期只更新登录态。
+
+- TC-02：检查真实可见选项、回显、状态列和总数载体；“筛选后总数不变”若无业务依据，先修订计划。
+- TC-04：由目标选项搜索/滚动补充依据；仍需真实存在匹配数据，前三行没有该处室不能证明数据不存在。
+- TC-07：按真实摘要与 pageSize 确认第二页前提。真实数据不足时保留数据缺口，不能假装完成翻页。需求允许 URL 或页面状态时，可按已验证页面状态断言；明确要求 URL 时不能替代。
+
+### 1.3.1 的变化（保留）
 
 1. 登录页可自行注册账号。注册后默认测试人员，不自动取得其他项目或管理员权限。
 2. 所有启用账号均可创建项目，创建人拥有该项目全流程权限。仍可访问管理员额外分配的项目。历史项目不根据名称或已有访问权自动推断所有者。
@@ -72,7 +93,7 @@ API 和 Worker 共用镜像，数据库异步连接池；队列事务领取，�
 同一入口管理历史采集、启动新采集、查看截图、定位依据与表格样本、确认/修改数据。
 
 - Explorer 先记录初始状态，再自动展开唯一且可见的已验证筛选控件，保留展开路径、状态和候选表达式。隐藏的其他字段不会阻塞当前无关用例；默认折叠不自动成为额外测试点。
-- 除默认展开外，定向探索可从已验证选项中切换标签页或打开自定义下拉；不执行保存、删除、提交或查询业务操作，不执行模型返回的任意代码/选择器。
+- 除默认展开外，定向探索可从已验证选项中切换标签页或打开自定义下拉；支持在已关联的 Select 搜索输入中搜索目标选项、滚动已验证的虚拟选项列表；不执行保存、删除、提交或查询业务操作，不执行模型返回的任意代码/选择器。
 - 支持嵌套 iframe 路径、角色/标签/placeholder/testId/id/name、Ant Design/Element 表单范围和空状态组件。重复候选只有实际筛选后唯一可见才可交互，不用 first()/nth() 猜测。
 - 最多 8 个 frame，每 frame 240 个控件、5 张表，每表当前可见前 3 行。不是全站遍历、全量业务数据或数据库采集。
 - 业务规则可留空，此时以已审核计划为准。测试数据/数据前提仍须确认，可删减或脱敏；采样行不能证明精确/模糊匹配、唯一性或权限范围。
@@ -166,7 +187,7 @@ docker compose -f compose.yaml -f compose.dev.yaml restart api worker
 
 正式发布不加载开发挂载配置。接公司外部数据库时，另行调整 Compose 的 DB_HOST、mysql 依赖和服务；当前内置配置强制 DB_HOST=mysql。
 
-## 8. 从 1.3.0 升级到 1.3.1，保留原数据卷
+## 8. 从 1.3.0 / 1.3.1 升级到 1.3.2，保留原数据卷
 
 本交付是累计源码更新包，不是独立完整安装包或 Docker 镜像。保留原 Dockerfile、Compose、.env、软件源/证书修复与数据；此次没有新增依赖，package/lock 仅更新平台版本号。新字段存入原记录 JSON，users 表沿用 1.3.0。新建项目记录 ownerId；旧项目不改所有权，不清库。
 
@@ -180,8 +201,8 @@ docker compose -f compose.yaml -f compose.dev.yaml restart api worker
 ```bash
 mkdir -p backups
 docker compose stop api worker
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u"$MYSQL_USER" --single-transaction --no-tablespaces "$MYSQL_DATABASE"' > backups/pre-1.3.1.sql
-docker compose run --rm --no-deps --entrypoint tar api -czf - -C /app/data . > backups/pre-1.3.1-data.tar.gz
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u"$MYSQL_USER" --single-transaction --no-tablespaces "$MYSQL_DATABASE"' > backups/pre-1.3.2.sql
+docker compose run --rm --no-deps --entrypoint tar api -czf - -C /app/data . > backups/pre-1.3.2-data.tar.gz
 # 确认备份成功，覆盖源码后：
 docker compose build api
 docker compose up -d --no-deps --force-recreate api worker
@@ -214,15 +235,15 @@ docker compose up -d --no-build
 先在可联网开发环境验收，再按服务器架构构建。例如 x86_64：
 
 ```bash
-docker buildx build --platform linux/amd64 --load -t testhub-ui:1.3.1-mysql .
+docker buildx build --platform linux/amd64 --load -t testhub-ui:1.3.2-mysql .
 docker pull --platform linux/amd64 mysql:8.4
-docker save -o testhub-1.3.1-images.tar testhub-ui:1.3.1-mysql mysql:8.4
+docker save -o testhub-1.3.2-images.tar testhub-ui:1.3.2-mysql mysql:8.4
 ```
 
 传输镜像包及已修改 api/worker image 标签的 Compose，服务器使用自己的 .env：
 
 ```bash
-docker load -i testhub-1.3.1-images.tar
+docker load -i testhub-1.3.2-images.tar
 docker compose up -d --no-build --pull never
 ```
 
@@ -240,7 +261,7 @@ RUN_BROWSER_TESTS=1 bash test-mysql.sh
 
 checks 包含真实 Chromium/Playwright 检查以及模拟模型和数据库适配层。真实 API 的账号、密码、会话、项目权限、注册、所有者操作、远程登录保存与界面流程可在无 MySQL 环境测试；这不证明 MySQL SQL、锁与迁移已通过。tests/platform.test.mjs 强制空的 testhub_test_* 数据库，test-mysql.sh 创建并清理独立数据库，不清业务表。
 
-本次本地 32 项功能检查已通过（包含扩充后的注册、所有者权限及模块界面检查），所有 JavaScript 模块语法检查通过。
+本次本地 35 项功能检查通过，包含真实 Chromium 下拉搜索、虚拟列表滚动、表格集合、分页、计划单条编辑，以及既有账号/权限/生成/报告流程；所有 JavaScript 模块语法检查通过。接口检查使用内存数据库适配器与模拟模型。
 
 本次交付环境未运行真实 MySQL、Docker 构建，也未连接 GCS DEV/UAT 或真实 DeepSeek。部署后优先用可重复的人员查询场景验收：注册 → 自建项目 → 登录态 → 采集/确认 → 建立模块 → 单条生成/补齐 → 试运行 → 审核 → 在线报告；再验证他人看不到未授权项目，管理员可见全部项目。
 

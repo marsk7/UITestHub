@@ -60,6 +60,7 @@ test('real API: accounts, project isolation, readonly restrictions, cached evide
   const plan=(await call('/plans','POST',{projectId:own.id,name:'人员模块',content:'### TC-01 查询\n### TC-02 重置'},oc)).data;
   await call('/plans/'+plan.id+'/approve','POST',{},oc);const manifest=(await call('/plans/'+plan.id+'/manifest','GET',undefined,oc)).data;
   const module=await call('/modules','POST',{planId:plan.id,planVersion:manifest.planVersion,name:'人员模块',manifestConfirmed:true,manifestText:'TC-01 查询\nTC-02 重置'},oc);assert.equal(module.status,201);assert.equal(module.data.coverage.expected,2);assert.equal(module.data.coverage.generated,0);
+  assert.equal((await call('/plans/'+plan.id,'PUT',{name:'冲突修改',content:'不应覆盖',version:'stale-version'},oc)).status,409);
   const os=(await call('/state','GET',undefined,oc)).data;assert.ok(os.me.ownedProjectIds.includes(own.id));assert.equal(os.suites.find(x=>x.id===module.data.id).caseInventory.length,2);
   assert.equal((await call('/suites/'+module.data.id+'/cases','GET',undefined,admin)).status,200); // Empty module remains manageable before generation.
   assert.equal((await call('/suites/'+module.data.id+'/missing','GET',undefined,vc)).status,401);
