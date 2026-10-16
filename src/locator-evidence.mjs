@@ -48,12 +48,12 @@ export function compactEvidence(e){
 }
 
 // Preserve replayable prerequisite paths from earlier observations, with provenance.
-// Never carry rules/data or controls across an environment/authentication change.
+// Never carry controls across a project/environment change. Authentication refresh does not erase page structure.
 export function mergeEvidence(previous,current){
- if(!previous||['projectId','baseURL','entry','authSavedAt'].some(k=>(previous[k]||null)!==(current[k]||null)))return current;
+ if(!previous||['projectId','baseURL','entry'].some(k=>(previous[k]||null)!==(current[k]||null)))return current;
  const seen=new Map();
  for(const source of [previous,current])for(const c of source.controls||[]){
-  const observedAt=c.observedAt||source.capturedAt;if(observedAt&&Date.now()-Date.parse(observedAt)>24*3600000)continue;
+  const observedAt=c.observedAt||source.capturedAt;
   const value={...c,observedAt,sourceEvidenceId:c.sourceEvidenceId||source.id||null};
   const key=JSON.stringify([c.framePath,c.nameHint,c.contextLabel,c.prerequisites||[],c.candidates.map(x=>locatorKey(x.expression))]);
   seen.set(key,value);

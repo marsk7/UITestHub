@@ -37,7 +37,7 @@ test('data or permission gaps do not trigger futile browser exploration',async()
 test('Explorer observes real hidden control, records prerequisite, and rejects invented destructive action',{timeout:30000},async()=>{
  let submitted=0;const server=http.createServer((req,res)=>{if(req.url==='/delete'){submitted++;res.end('bad');return;}res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<html><body><button aria-expanded="false" onclick="document.querySelector('#hidden').hidden=false;this.setAttribute('aria-expanded','true')">展开查询</button><button onclick="fetch('/delete')">删除</button><div id="hidden" hidden><label>工号<input id="staff"></label></div></body></html>`);});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const dir=await mkdtemp(join(tmpdir(),'explorer-agent-'));let rounds=0;
- try{const evidence=await explore({project:{id:'p',baseURL:'http://127.0.0.1:'+server.address().port,entry:'/'},dir,agent:async observation=>{
+ try{const evidence=await explore({project:{id:'p',baseURL:'http://127.0.0.1:'+server.address().port,entry:'/'},dir,expand:false,agent:async observation=>{
  rounds++;assert.ok(!observation.options.some(x=>x.name==='删除'));
  if(rounds===1){assert.equal(observation.controls.find(x=>x.nameHint==='工号').usable,false);return{actionKey:observation.options[0].key,suggestion:'尝试展开筛选'};}
  assert.equal(observation.controls.find(x=>x.nameHint==='工号').usable,true);return{actionKey:'button:删除',suggestion:'不应执行此操作'};

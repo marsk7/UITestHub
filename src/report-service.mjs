@@ -55,13 +55,13 @@ export function createReportService({data,ownerActive,ttl=30*60*1000}){
   async issue(jobId,owner,reportPath='html-report'){
    if(typeof reportPath!=='string'||! /^(?:verify-(?:TC|CASE)[-_]\d+\/)?html-report$/.test(reportPath))fail('报告路径不允许',403);
    const root=path.join(data,'runs',jobId);await artifactPath(root,reportPath+'/index.html');
-   for(const [key,g]of grants)if(g.expiresAt<=Date.now()||!ownerActive(g.owner))grants.delete(key);
+   for(const [key,g]of grants)if(g.expiresAt<=Date.now()||!await ownerActive(g.owner,g.jobId))grants.delete(key);
    const token=randomBytes(32).toString('hex'),expiresAt=Date.now()+ttl;grants.set(token,{jobId,owner,expiresAt,reportPath});
    return{url:`/report-assets/${token}/index.html`,expiresAt};
   },
   async handle(req,res,u){
    const m=u.pathname.match(/^\/report-assets\/([a-f0-9]{64})\/(.+)$/);if(!m)return false;
-   const grant=grants.get(m[1]);if(!grant||grant.expiresAt<=Date.now()||!ownerActive(grant.owner)){grants.delete(m[1]);fail('报告访问已过期，请从平台重新打开',401);}
+   const grant=grants.get(m[1]);if(!grant||grant.expiresAt<=Date.now()||!await ownerActive(grant.owner,grant.jobId)){grants.delete(m[1]);fail('报告访问已过期，请从平台重新打开',401);}
    if(!['GET','HEAD'].includes(req.method))fail('仅允许读取报告',405);
    const origin=new URL('http://'+req.headers.host).host; // Source restriction uses the request authority; no redirect or proxy fetch.
    res.setHeader('X-Frame-Options','SAMEORIGIN');res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Referrer-Policy','no-referrer');

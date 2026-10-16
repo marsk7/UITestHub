@@ -1,3 +1,6 @@
+import {caseResults} from './run-results.mjs';
+import {canProject,requireProject,requireAdmin,permitRoute,publicAccount} from './access.mjs';
+import {initAccounts,authenticate,userById,listUsers,saveUser,changePassword} from './accounts.mjs';
 import {verificationSettings} from './generation-verifier.mjs';
 import {createReportService,listArtifacts,sendArtifact} from './report-service.mjs';
 import {missingCases,retryTargets} from './suite-workflow.mjs';
@@ -10,14 +13,14 @@ import http from 'node:http';
 import {readFile,writeFile,mkdir,readdir,stat,rename,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {createHash,randomBytes,timingSafeEqual} from 'node:crypto';
-import {DATA,query,init,replaceRecord,recycleRecord,suitePlan,list,get,put,jobs,job,enqueue,now} from './db.mjs';
+import {randomBytes} from 'node:crypto';
+import {DATA,query,init,replaceRecord,recycleRecord,suitePlan,list,get,put,jobs,job as getJob,enqueue as queueJob,now} from './db.mjs';
 import {seed} from './seed.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const secret=process.env.ADMIN_PASSWORD;
 if(!secret||secret.length<12)throw new Error('ADMIN_PASSWORD must contain at least 12 characters. Use scripts/setup.mjs.');
 const sessions=new Map(),attempts=new Map();
-const reports=createReportService({data:DATA,ownerActive:owner=>(sessions.get(owner)||0)>Date.now()});
+const reports=createReportService({data:DATA,ownerActive:async(owner,jobId)=>{const actor=await sessionUser(owner);if(!actor)return false;const j=await getJob(jobId);return !!j&&canProject(actor,j.payload.projectId);}});
 const loginSessions=new LoginSessions({save:async(project,storage)=>{
  const current=await get(project.id,'project');if(!current||current.baseURL!==project.baseURL)throw Object.assign(new Error('项目环境已修改，请重新登录'),{status:409});
  const dir=path.join(DATA,'auth');await mkdir(dir,{recursive:true,mode:0o700});const tmp=path.join(dir,project.id+'.'+randomBytes(8).toString('hex')+'.tmp');
@@ -26,9 +29,10 @@ const loginSessions=new LoginSessions({save:async(project,storage)=>{
 }});
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,async()=>{await loginSessions.dispose();process.exit(0);});
 
-const hash=x=>createHash('sha256').update(x).digest();
-const same=(a,b)=>timingSafeEqual(hash(a),hash(b));
+async function sessionUser(token){const s=sessions.get(token);if(!s||s.expiresAt<=Date.now()){sessions.delete(token);return null;}const user=await userById(s.userId);if(!user?.enabled||user.sessionVersion!==s.version){sessions.delete(token);await loginSessions.closeOwner(token);return null;}return user;}
+async function revokeSessions(userId){for(const [token,s] of sessions)if(s.userId===userId){sessions.delete(token);await loginSessions.closeOwner(token);}}
 await init();
+await initAccounts(secret);
 await seed();
 const accepted=j=>({id:j.id,status:j.status,kind:j.kind});
 function send(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
@@ -37,7 +41,6 @@ function required(value,label,max=20000){if(typeof value!=='string'||!value.trim
 function explorationSettings(b){return{...verificationSettings(b),locatorNotes:String(b.locatorNotes||'').slice(0,10000),explorationSteps:Math.max(1,Math.min(8,Math.trunc(Number(b.explorationSteps)||6))),explorationRounds:Math.max(1,Math.min(3,Math.trunc(Number(b.explorationRounds)||2)))};}
 function projectInput(b){const baseURL=required(b.baseURL,'环境地址',2000);let u;try{u=new URL(baseURL);}catch{err('环境地址格式不正确');}if(!['http:','https:'].includes(u.protocol)||u.username||u.password)err('仅支持不含凭证的 HTTP/HTTPS 地址');if(!String(b.entry||'/').startsWith('/')||String(b.entry).startsWith('//'))err('入口路径必须以单个 / 开头');return {name:required(b.name,'项目名称',100),baseURL:u.origin,entry:String(b.entry||'/'),description:String(b.description||'').slice(0,5000)};}
 async function body(req){let s='';for await(const chunk of req){s+=chunk;if(Buffer.byteLength(s)>2_000_000)err('请求内容超过 2MB',413);}try{return JSON.parse(s||'{}');}catch{err('JSON 格式错误');}}
-async function must(id,kind){const v=await get(id,kind);if(!v||v.deletedAt)err('记录不存在或已删除',404);return v;}
 const server=http.createServer(async(req,res)=>{
 res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');
 try{
@@ -46,22 +49,33 @@ if(p.startsWith('/report-assets/')){if(await reports.handle(req,res,u))return;er
 if(p==='/health'){await query('SELECT 1');return send(res,200,{ok:true});}
 if(p==='/api/login'&&m==='POST'){
  const ip=req.socket.remoteAddress,t=Date.now(),a=attempts.get(ip)||{start:t,count:0};if(t-a.start>900000){a.start=t;a.count=0;}a.count++;attempts.set(ip,a);if(a.count>20)err('登录尝试过多，请15分钟后重试',429);
- const b=await body(req);if(!same(String(b.password||''),secret))err('密码不正确',401);
- const token=randomBytes(32).toString('hex');sessions.set(token,t+8*3600000);for(const [k,v]of sessions)if(v<t)sessions.delete(k);
+ const b=await body(req),user=await authenticate(b.username,b.password);
+ const token=randomBytes(32).toString('hex');sessions.set(token,{userId:user.id,version:user.sessionVersion,expiresAt:t+8*3600000});for(const [k,v]of sessions)if(v.expiresAt<t)sessions.delete(k);
  res.setHeader('Set-Cookie',`testhub=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.COOKIE_SECURE==='true'?'; Secure':''}`);return send(res,200,{ok:true});
 }
 if(p.startsWith('/api/')){
  const cookie=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('testhub='))?.slice(8);
- if(!cookie||(sessions.get(cookie)||0)<Date.now())err('请先登录',401);
+ const actor=await sessionUser(cookie);if(!actor)err('请先登录',401);
  if(!['GET','HEAD'].includes(m)&&req.headers.origin){let originHost;try{originHost=new URL(req.headers.origin).host;}catch{err('跨站请求被拒绝',403);}if(originHost!==req.headers.host)err('跨站请求被拒绝',403);}
+ permitRoute(actor,m,p);
+ const must=async(id,kind,includeDeleted=false)=>{const record=await get(id,kind);if(!record||record.deletedAt&&!includeDeleted)err('记录不存在或已删除',404);requireProject(actor,kind==='project'?record.id:record.projectId);return record;};
+ const job=async id=>{const j=await getJob(id);if(!j)err('任务不存在',404);requireProject(actor,j.payload.projectId);return j;};
+ const enqueue=async(kind,payload)=>{requireProject(actor,payload.projectId);if(payload.liveValidation)requireAdmin(actor);return queueJob(kind,{...payload,requestedBy:actor.id});};
+ if(p==='/api/users'&&m==='GET'){requireAdmin(actor);return send(res,200,await listUsers());}
+ if((p==='/api/users'&&m==='POST')||(/^\/api\/users\/[\w-]+$/.test(p)&&m==='PATCH')){
+  requireAdmin(actor);const b=await body(req);for(const projectId of b.projectIds||[])await must(projectId,'project');
+  const user=await saveUser(b,{id:m==='PATCH'?p.split('/').at(-1):undefined,version:b.version,actorId:actor.id});await revokeSessions(user.id);return send(res,m==='POST'?201:200,user);
+ }
+ if(p==='/api/me/password'&&m==='POST'){const b=await body(req);await changePassword(actor,b.oldPassword,b.password);await revokeSessions(actor.id);return send(res,200,{ok:true,relogin:true});}
  if(p==='/api/logout'&&m==='POST'){await loginSessions.closeOwner(cookie);sessions.delete(cookie);res.setHeader('Set-Cookie','testhub=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return send(res,200,{ok:true});}
  if(p==='/api/state'&&m==='GET'){
- const plans=await list('plan'),suites=await list('suite');
- return send(res,200,{projects:await list('project'),plans:plans.filter(x=>!x.deletedAt),suites:suites.filter(x=>!x.deletedAt),trash:{plans:plans.filter(x=>x.deletedAt),suites:suites.filter(x=>x.deletedAt)},evidence:(await list('evidence')).map(({controls,tables,frames,...e})=>e),jobs:(await jobs()).map(({payload,log,...j})=>({...j,...jobDisplay(j.kind,payload)})),workers:await query('SELECT * FROM workers'),model:{configured:!!process.env.LLM_BASE_URL&&!!process.env.LLM_MODEL,model:process.env.LLM_MODEL||'',baseURL:process.env.LLM_BASE_URL||''}});
+ const projects=(await list('project')).filter(x=>canProject(actor,x.id)),visible=x=>canProject(actor,x.projectId);
+ const plans=(await list('plan')).filter(visible),suites=(await list('suite')).filter(visible);
+ return send(res,200,{me:publicAccount(actor),projects,plans:plans.filter(x=>!x.deletedAt),suites:suites.filter(x=>!x.deletedAt),trash:{plans:plans.filter(x=>x.deletedAt),suites:suites.filter(x=>x.deletedAt)},evidence:(await list('evidence')).filter(visible).map(({controls,tables,frames,...e})=>e),jobs:(await jobs(actor.role==='admin'?undefined:actor.projectIds)).filter(x=>visible(x.payload)).map(({payload,log,...j})=>({...j,...jobDisplay(j.kind,payload)})),workers:await query('SELECT * FROM workers'),model:{configured:!!process.env.LLM_BASE_URL&&!!process.env.LLM_MODEL,model:process.env.LLM_MODEL||'',baseURL:actor.role==='admin'?process.env.LLM_BASE_URL||'':''}});
  }
  if(p==='/api/projects'&&m==='POST')return send(res,201,await put('project',{...projectInput(await body(req)),auth:false}));
  let match;
- if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)(?:\/(restore))?$/))&&((m==='DELETE'&&!match[3])||(m==='POST'&&match[3]==='restore')))return send(res,200,await recycleRecord(match[2],match[1]==='plans'?'plan':'suite',m==='POST'));
+ if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)(?:\/(restore))?$/))&&((m==='DELETE'&&!match[3])||(m==='POST'&&match[3]==='restore'))){await must(match[2],match[1]==='plans'?'plan':'suite',true);return send(res,200,await recycleRecord(match[2],match[1]==='plans'?'plan':'suite',m==='POST'));}
  if((match=p.match(/^\/api\/(plans|suites)\/([\w-]+)\/metadata$/))&&m==='PATCH'){
  const kind=match[1]==='plans'?'plan':'suite',old=await must(match[2],kind),b=await body(req);if(b.version!==old.updated)err('记录已变化，请刷新',409);
  return send(res,200,await replaceRecord(old.id,old.updated,{...old,name:required(b.name,'名称',100),moduleName:required(b.moduleName,'功能模块',100),purpose:required(b.purpose,'用途 / 版本说明',300)}));
@@ -80,7 +94,7 @@ if(p.startsWith('/api/')){
 
  if((match=p.match(/^\/api\/projects\/([\w-]+)\/login-session$/))&&m==='POST')return send(res,201,await loginSessions.start(cookie,await must(match[1],'project')));
  if((match=p.match(/^\/api\/login-sessions\/([\w-]+)(?:\/(frame|input|save))?$/))){
-  const id=match[1],op=match[2];loginSessions.owned(id,cookie);
+  const id=match[1],op=match[2];const loginSession=loginSessions.owned(id,cookie);requireProject(actor,loginSession.project.id);
   if(m==='GET'&&op==='frame')return send(res,200,await loginSessions.frame(id,cookie));
   if(m==='POST'&&op==='input')return send(res,200,await loginSessions.input(id,cookie,await body(req)));
   if(m==='POST'&&op==='save')return send(res,200,await loginSessions.persist(id,cookie,(await body(req)).confirmed));
@@ -95,12 +109,12 @@ if(p.startsWith('/api/')){
  if(p==='/api/explore'&&m==='POST'){
   const b=await body(req),pr=await must(b.projectId,'project');let storageState=null;
   if(pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
-  return send(res,202,accepted(await enqueue('explore',{projectId:pr.id,name:pr.name+' · 页面采集',project:pr,storageState,expand:b.expand===true})));
+  return send(res,202,accepted(await enqueue('explore',{projectId:pr.id,name:pr.name+' · 页面采集',project:pr,storageState,expand:b.expand!==false})));
  }
  if((match=p.match(/^\/api\/evidence\/([\w-]+)$/))&&m==='GET')return send(res,200,await must(match[1],'evidence'));
  if((match=p.match(/^\/api\/evidence\/([\w-]+)\/confirm$/))&&m==='POST'){
   const old=await must(match[1],'evidence'),b=await body(req),pr=await must(old.projectId,'project');checkEvidence(old,pr,false);
-  return send(res,200,await put('evidence',{...old,rules:required(b.rules,'业务规则',20000),selectedData:required(b.selectedData,'确认的测试数据或数据前提',20000),notes:String(b.notes||'').slice(0,10000),confirmed:true,confirmedAt:now()},old.id));
+  return send(res,200,await put('evidence',{...old,rules:String(b.rules||'').trim().slice(0,20000),selectedData:required(b.selectedData,'确认的测试数据或数据前提',20000),notes:String(b.notes||'').slice(0,10000),confirmed:true,confirmedAt:now()},old.id));
  }
  if((match=p.match(/^\/api\/suites\/([\w-]+)\/cases$/))&&m==='GET'){
  const suite=await must(match[1],'suite');return send(res,200,{suiteId:suite.id,hash:codeHash(suite.code),cases:cases(suite.code)});
@@ -144,8 +158,8 @@ if(p.startsWith('/api/')){
  }
  if(p==='/api/runs'&&m==='POST'){const b=await body(req),suite=await must(b.suiteId,'suite');if(!suite.approved)err('请先审核脚本，修改后需重新审核');const pr=await must(suite.projectId,'project');if(suite.evidenceId){const e=await must(suite.evidenceId,'evidence');checkEvidence(e,pr);if(e.updated!==suite.evidenceVersion)err('页面依据已修改，请重新生成脚本');}let storageState=null;if(pr.auth)storageState=JSON.parse(await readFile(path.join(DATA,'auth',pr.id+'.json'),'utf8'));
  const j=await enqueue('run',{projectId:pr.id,name:suite.name,project:pr,suite,storageState});return send(res,202,{id:j.id,status:j.status});}
- if((match=p.match(/^\/api\/jobs\/([\w-]+)$/))&&m==='GET'){const j=await job(match[1]);if(!j)err('任务不存在',404);const{payload,...safe}=j;if(['generator','complete-suite'].includes(j.kind)&&!safe.result){try{safe.result={generationVerification:JSON.parse(await readFile(path.join(DATA,'runs',j.id,'generation-progress.json'),'utf8'))};}catch{}}return send(res,200,{...safe,...jobDisplay(j.kind,payload)});}
- if((match=p.match(/^\/api\/jobs\/([\w-]+)\/cancel$/))&&m==='POST'){await query("UPDATE jobs SET payload=JSON_REMOVE(payload,'$.storageState'),cancel=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated=? WHERE id=? AND status IN ('queued','running')",[now(),match[1]]);return send(res,200,{ok:true});}
+ if((match=p.match(/^\/api\/jobs\/([\w-]+)$/))&&m==='GET'){const j=await job(match[1]);if(!j)err('任务不存在',404);const{payload,...safe}=j;if(['generator','complete-suite'].includes(j.kind)&&!safe.result){try{safe.result={generationVerification:JSON.parse(await readFile(path.join(DATA,'runs',j.id,'generation-progress.json'),'utf8'))};}catch{}}if(['run','validate'].includes(j.kind)&&!safe.result?.cases){try{const reportFile=path.join(DATA,'runs',j.id,'results.json');if((await stat(reportFile)).size<=10_000_000)safe.result={...safe.result,cases:caseResults(JSON.parse(await readFile(reportFile,'utf8')))};}catch{}}return send(res,200,{...safe,...jobDisplay(j.kind,payload)});}
+ if((match=p.match(/^\/api\/jobs\/([\w-]+)\/cancel$/))&&m==='POST'){await job(match[1]);await query("UPDATE jobs SET payload=JSON_REMOVE(payload,'$.storageState'),cancel=1,status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END,updated=? WHERE id=? AND status IN ('queued','running')",[now(),match[1]]);return send(res,200,{ok:true});}
  if((match=p.match(/^\/api\/jobs\/([\w-]+)\/analyze$/))&&m==='POST'){const j=await job(match[1]);if(!j||!['run','validate'].includes(j.kind)||!['passed','failed','error','interrupted'].includes(j.status))err('该执行结果暂不可分析');return send(res,202,await enqueue('reporter',{projectId:j.payload.projectId,name:j.payload.name,runId:j.id,summary:j.result,log:j.log}));}
  if((match=p.match(/^\/api\/jobs\/([\w-]+)\/report-link$/))&&m==='POST'){if(!(await job(match[1])))err('任务不存在',404);return send(res,200,await reports.issue(match[1],cookie,(await body(req)).reportPath||'html-report'));}
  if((match=p.match(/^\/api\/jobs\/([\w-]+)\/artifacts$/))&&m==='GET'){if(!(await job(match[1])))err('任务不存在',404);return send(res,200,await listArtifacts(path.join(DATA,'runs',match[1])));}

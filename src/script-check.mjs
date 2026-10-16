@@ -2,7 +2,7 @@ import {locatorKey} from './locator-evidence.mjs';
 import ts from 'typescript';
 import {createHash} from 'node:crypto';
 export const codeHash=code=>createHash('sha256').update(code).digest('hex');
-export function checkEvidence(e,p,confirmed=true){const fail=s=>{throw Object.assign(new Error(s),{status:409});};if(e.projectId!==p.id||e.baseURL!==p.baseURL||e.entry!==p.entry)fail('页面依据与项目环境不一致，请重新采集');if((e.authSavedAt||null)!==(p.authSavedAt||null))fail('登录态已更换，请重新采集');if(!Number.isFinite(Date.parse(e.capturedAt))||Date.now()-Date.parse(e.capturedAt)>24*3600000)fail('采集结果已超过 24 小时，请重新采集');if(confirmed&&!e.confirmed)fail('请先确认业务规则和测试数据');}
+export function checkEvidence(e,p,confirmed=true){const fail=s=>{throw Object.assign(new Error(s),{status:409});};if(e.projectId!==p.id||e.baseURL!==p.baseURL||e.entry!==p.entry)fail('页面依据与项目环境不一致，请重新采集');if(!Number.isFinite(Date.parse(e.capturedAt)))fail('采集时间无效');if(confirmed&&!e.confirmed)fail('请先确认页面依据和测试数据');}
 export function checkScript(code,evidence){
  const errors=[];const ast=ts.createSourceFile('suite.spec.ts',code,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
  for(const d of ast.parseDiagnostics)errors.push(ts.flattenDiagnosticMessageText(d.messageText,' '));

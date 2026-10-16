@@ -40,7 +40,7 @@ export async function suitePlan(suite){
  return plan;
 }
 export async function job(id){return decode((await query('SELECT * FROM jobs WHERE id=?',[id]))[0]);}
-export async function jobs(){return (await query('SELECT * FROM jobs ORDER BY created DESC LIMIT 200')).map(decode);}
+export async function jobs(projectIds){if(projectIds&&projectIds.length===0)return [];const where=projectIds?" WHERE JSON_UNQUOTE(JSON_EXTRACT(payload,'$.projectId')) IN ("+projectIds.map(()=>'?').join(',')+')':'';return (await query('SELECT * FROM jobs'+where+' ORDER BY created DESC LIMIT 200',projectIds||[])).map(decode);}
 export async function log(id,s){await query('UPDATE jobs SET log=RIGHT(CONCAT(log,?),120000),updated=? WHERE id=?',[s,now(),id]);}
 export async function finish(id,status,result){await query("UPDATE jobs SET status=CASE WHEN cancel=1 THEN 'cancelled' ELSE ? END,result=?,updated=? WHERE id=? AND status='running'",[status,JSON.stringify(result),now(),id]);}
 export async function claim(){const c=await pool.getConnection();try{await c.beginTransaction();const [rows]=await c.execute("SELECT * FROM jobs WHERE status='queued' AND cancel=0 ORDER BY created,id LIMIT 1 FOR UPDATE SKIP LOCKED");const r=rows[0];if(r){r.status='running';r.updated=now();await c.execute("UPDATE jobs SET status='running',updated=? WHERE id=?",[r.updated,r.id]);}await c.commit();return decode(r);}catch(e){await c.rollback();throw e;}finally{c.release();}}
