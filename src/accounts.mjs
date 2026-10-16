@@ -28,7 +28,7 @@ export async function saveUser(input,{id,version,actorId}={}){
   if(id&&!old)deny('账号不存在',404);
   if(old&&old.updated!==version)deny('账号已变化，请刷新',409);
   if(old&&value.username!==old.username)deny('账号名不可修改',400);
-  if(old?.id===actorId&&(!value.enabled||value.role!=='admin'))deny('不能停用或降低当前管理员自身权限',400);
+  if(old&&old.id===actorId&&(!value.enabled||value.role!=='admin'))deny('不能停用或降低当前管理员自身权限',400);
   if(old?.role==='admin'&&old.enabled&&(!value.enabled||value.role!=='admin')&&!rows.some(r=>r.id!==id&&r.role==='admin'&&r.enabled))deny('至少保留一名启用的管理员',409);
   const t=new Date(Math.max(Date.now(),old?Date.parse(old.updated)+1:0)).toISOString();
   if(old)await c.execute('UPDATE users SET display_name=?,role=?,enabled=?,project_ids=?,password_hash=?,session_version=session_version+1,updated=? WHERE id=?',[value.displayName,value.role,value.enabled?1:0,JSON.stringify(value.projectIds),passwordHash||old.passwordHash,t,id]);

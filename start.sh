@@ -16,4 +16,4 @@ docker compose config --quiet
 docker compose build api
 docker compose up -d --force-recreate
 echo '已提交启动。检查 docker compose ps 和 docker compose logs --tail=100 api worker mysql。'
-echo '默认访问 http://127.0.0.1:8080；管理员密码为 .env 中 ADMIN_PASSWORD。'
+echo '默认访问 http://127.0.0.1:8080；首次初始化账号 admin，密码为 .env 中 ADMIN_PASSWORD；已有账号密码以数据库为准。'

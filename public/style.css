@@ -6,3 +6,5 @@
 .tag.needs-review{background:#fff1d9;color:#966000}
 
 .case-group{border:1px solid var(--border,#dde4ec);border-radius:8px;padding:12px;margin:10px 0}.case-group>summary{font-weight:600;cursor:pointer}.modal-body>details{margin:12px 0}.modal-body details>summary{cursor:pointer;padding:8px 0}.case-group details{margin-left:12px}
+
+.tree-project{background:#fff;border:1px solid #dfe5ed;border-radius:12px;padding:16px;margin:14px 0}.tree-project>summary{font-size:18px;font-weight:650;cursor:pointer}.tree-module{margin:12px 0 0 16px;padding:12px;border:1px solid #e4e8ef;border-radius:8px}.tree-module>summary{font-weight:600;cursor:pointer;padding:4px}.tree-module>.actions{margin:12px 0}.case-row{padding:12px 8px}.login-card>#switch-auth{margin-top:10px}

@@ -8,6 +8,7 @@ export function jobDisplay(kind,p={}){
   else{displayType=kind==='validate'?'整组脚本试运行':'整组脚本正式执行';scopeLabel=caseCount===null?'整组 · 数量未知':`整组 · ${caseCount} 条用例`;}
  }else if(['generator','complete-suite','explore-gaps'].includes(kind)){caseCount=p.manifest?.length??null;scopeLabel=caseCount===null?'历史任务 · 覆盖数量未知':`${kind==='generator'?'全部':'目标'} ${caseCount} 条用例：${(p.manifest||[]).map(x=>x.id).join('、')}`;}
  else if(kind==='regenerate-case'){caseCount=1;caseTitle=p.target?.title||'';scopeLabel=caseTitle;}
+ if(kind==='complete-suite')displayType=caseCount===1?'单用例脚本生成 / 补齐':'模块脚本生成 / 补齐';
  if(p.liveValidation&&['generator','complete-suite'].includes(kind))displayType+=' + 逐用例浏览器验证';
- return{displayType,scopeLabel,caseCount,caseTitle,name:`${displayType} · ${p.suite?.name||p.name||'未命名'}${scopeLabel?' · '+scopeLabel:''}`,projectId:p.projectId};
+ return{displayType,scopeLabel,caseCount,caseTitle,name:`${displayType} · ${p.suite?.name||p.name||'未命名'}${scopeLabel?' · '+scopeLabel:''}`,projectId:p.projectId,moduleId:p.moduleId||p.suite?.planId||p.plan?.id||p.suite?.id||null,moduleName:p.moduleName||p.suite?.moduleName||p.plan?.moduleName||p.suite?.name||p.plan?.name||(['explore'].includes(kind)?'项目页面采集':'未归属模块')};
 }
