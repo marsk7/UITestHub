@@ -1,10 +1,15 @@
-# TestHub 1.3.2
+# TestHub 1.3.3
 
 TestHub 是面向可信内部测试团队的 UI 自动化平台：需求/PRD → 测试计划 → 页面采集 → 模块与用例脚本 → Playwright 执行 → 在线报告与修复。前端为原生 JavaScript，API/Worker 为 Node.js ESM，脚本使用 TypeScript，数据存储于 MySQL 8.4，浏览器使用 Chromium。
 
-**版本口径：原 1.2.6 更名为 1.3.0，本次版本为 1.3.2。** 本文是统一使用、部署、升级与维护文档，已合并此前各 UPDATE 文档；旧文件仅保留指向本文的入口。
 
-## 1. 1.3.2 的变化
+## 1.3.3 本次更新
+
+- 发给模型的页面依据使用字段白名单：保留控件、定位路径、表格列结构；剔除查询结果、样本行、容器拼接文本及旧版自动填充的测试数据。原始采集记录仍保留在平台供查看，不直接发给模型。手填测试数据可选；旧自动数据不会自动迁入手填字段。此优化不截断定位依据，也不承诺完整计划与所有控件合计必然小于 20000 字符。
+- 缺失用例补齐窗口新增“补充生成指令”，每次最多 10000 字符，随所选用例生成、校验修正和自动定向探索传递；已有脚本保持不变。指令不能替代真实定位证据或降低业务断言。
+- 覆盖完整、缺口解决、静态检查通过后即可人工审核并执行，无需先试运行。模块/单条试运行及生成时浏览器验证保留为可选诊断工具，历史试运行失败不再阻塞审核。
+
+## 1. 1.3.3 的变化
 
 本次以 1.3.1 为基线，保留注册、项目所有者和数据权限等已有功能。源码增量包用于覆盖现有项目，不含原部署文件、`.env`、数据卷和依赖目录；无新增依赖、数据库表或迁移。
 
@@ -96,7 +101,7 @@ API 和 Worker 共用镜像，数据库异步连接池；队列事务领取，�
 - 除默认展开外，定向探索可从已验证选项中切换标签页或打开自定义下拉；支持在已关联的 Select 搜索输入中搜索目标选项、滚动已验证的虚拟选项列表；不执行保存、删除、提交或查询业务操作，不执行模型返回的任意代码/选择器。
 - 支持嵌套 iframe 路径、角色/标签/placeholder/testId/id/name、Ant Design/Element 表单范围和空状态组件。重复候选只有实际筛选后唯一可见才可交互，不用 first()/nth() 猜测。
 - 最多 8 个 frame，每 frame 240 个控件、5 张表，每表当前可见前 3 行。不是全站遍历、全量业务数据或数据库采集。
-- 业务规则可留空，此时以已审核计划为准。测试数据/数据前提仍须确认，可删减或脱敏；采样行不能证明精确/模糊匹配、唯一性或权限范围。
+- 业务规则可留空，此时以已审核计划为准。测试数据/数据前提为可选手填，不自动填入页面查询结果；采样行不能证明精确/模糊匹配、唯一性或权限范围。
 - 登录态更新或采集超过 24 小时不强制重新采集；同一项目、环境、入口的旧依据可复用并累积来源。真实浏览器执行仍需有效登录态，页面实际改变时需定向更新。
 - 修改确认后的数据/规则会改变依据版本；相关旧脚本不能跳过版本核对。生成前核对计划与测试数据，不凭空补充业务预期。
 
@@ -135,7 +140,7 @@ API 和 Worker 共用镜像，数据库异步连接池；队列事务领取，�
 
 失败操作/断言及页面可访问性快照可触发定向探索，作为重新生成的修复依据。不自动重跑有副作用的失败操作，不自动应用修复，不直接将脚本失败认定为产品缺陷。
 
-模块试运行和单条试运行都会真实执行业务操作。单条仍运行公共初始化/清理。修改代码撤销原审核/验证。生成验证、单条通过都不替代正式整组试运行；基于页面依据的模块仍需覆盖完整、无未解决缺口、当前源码整组通过后才能审核执行。本版不包含逐用例豁免审批。
+模块试运行和单条试运行都会真实执行业务操作。单条仍运行公共初始化/清理。修改代码撤销原审核/验证。基于页面依据的模块需覆盖完整、无未解决缺口、静态检查通过后即可审核执行；试运行不是必需步骤。本版不包含逐用例豁免审批。
 
 ## 6. 执行中心与在线报告
 
@@ -187,7 +192,7 @@ docker compose -f compose.yaml -f compose.dev.yaml restart api worker
 
 正式发布不加载开发挂载配置。接公司外部数据库时，另行调整 Compose 的 DB_HOST、mysql 依赖和服务；当前内置配置强制 DB_HOST=mysql。
 
-## 8. 从 1.3.0 / 1.3.1 升级到 1.3.2，保留原数据卷
+## 8. 从 1.3.0 / 1.3.1 / 1.3.2 升级到 1.3.3，保留原数据卷
 
 本交付是累计源码更新包，不是独立完整安装包或 Docker 镜像。保留原 Dockerfile、Compose、.env、软件源/证书修复与数据；此次没有新增依赖，package/lock 仅更新平台版本号。新字段存入原记录 JSON，users 表沿用 1.3.0。新建项目记录 ownerId；旧项目不改所有权，不清库。
 
@@ -201,8 +206,8 @@ docker compose -f compose.yaml -f compose.dev.yaml restart api worker
 ```bash
 mkdir -p backups
 docker compose stop api worker
-docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u"$MYSQL_USER" --single-transaction --no-tablespaces "$MYSQL_DATABASE"' > backups/pre-1.3.2.sql
-docker compose run --rm --no-deps --entrypoint tar api -czf - -C /app/data . > backups/pre-1.3.2-data.tar.gz
+docker compose exec -T mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysqldump -u"$MYSQL_USER" --single-transaction --no-tablespaces "$MYSQL_DATABASE"' > backups/pre-1.3.3.sql
+docker compose run --rm --no-deps --entrypoint tar api -czf - -C /app/data . > backups/pre-1.3.3-data.tar.gz
 # 确认备份成功，覆盖源码后：
 docker compose build api
 docker compose up -d --no-deps --force-recreate api worker
@@ -235,15 +240,15 @@ docker compose up -d --no-build
 先在可联网开发环境验收，再按服务器架构构建。例如 x86_64：
 
 ```bash
-docker buildx build --platform linux/amd64 --load -t testhub-ui:1.3.2-mysql .
+docker buildx build --platform linux/amd64 --load -t testhub-ui:1.3.3-mysql .
 docker pull --platform linux/amd64 mysql:8.4
-docker save -o testhub-1.3.2-images.tar testhub-ui:1.3.2-mysql mysql:8.4
+docker save -o testhub-1.3.3-images.tar testhub-ui:1.3.3-mysql mysql:8.4
 ```
 
 传输镜像包及已修改 api/worker image 标签的 Compose，服务器使用自己的 .env：
 
 ```bash
-docker load -i testhub-1.3.2-images.tar
+docker load -i testhub-1.3.3-images.tar
 docker compose up -d --no-build --pull never
 ```
 
@@ -261,8 +266,8 @@ RUN_BROWSER_TESTS=1 bash test-mysql.sh
 
 checks 包含真实 Chromium/Playwright 检查以及模拟模型和数据库适配层。真实 API 的账号、密码、会话、项目权限、注册、所有者操作、远程登录保存与界面流程可在无 MySQL 环境测试；这不证明 MySQL SQL、锁与迁移已通过。tests/platform.test.mjs 强制空的 testhub_test_* 数据库，test-mysql.sh 创建并清理独立数据库，不清业务表。
 
-本次本地 35 项功能检查通过，包含真实 Chromium 下拉搜索、虚拟列表滚动、表格集合、分页、计划单条编辑，以及既有账号/权限/生成/报告流程；所有 JavaScript 模块语法检查通过。接口检查使用内存数据库适配器与模拟模型。
+本次本地 38 项功能检查通过，包含真实 Chromium 下拉搜索、虚拟列表滚动、表格集合、分页、计划单条编辑，以及既有账号/权限/生成/报告流程；所有 JavaScript 模块语法检查通过。接口检查使用内存数据库适配器与模拟模型。
 
-本次交付环境未运行真实 MySQL、Docker 构建，也未连接 GCS DEV/UAT 或真实 DeepSeek。部署后优先用可重复的人员查询场景验收：注册 → 自建项目 → 登录态 → 采集/确认 → 建立模块 → 单条生成/补齐 → 试运行 → 审核 → 在线报告；再验证他人看不到未授权项目，管理员可见全部项目。
+本次交付环境未运行真实 MySQL、Docker 构建，也未连接 GCS DEV/UAT 或真实 DeepSeek。部署后优先用可重复的人员查询场景验收：注册 → 自建项目 → 登录态 → 采集/确认 → 建立模块 → 单条生成/补齐 → 静态检查 → 审核 → 在线报告；再验证他人看不到未授权项目，管理员可见全部项目。
 
 后续维护以 README 为准，新增功能同时更新源码、相关回归检查和本文。不要继续另建相互矛盾的分版本操作手册。问题定位时保存任务编号、模块/用例编号、实际日志与报告，并区分定位/断言/环境问题与真实产品缺陷。

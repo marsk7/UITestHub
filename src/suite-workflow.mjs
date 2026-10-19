@@ -43,7 +43,7 @@ export async function generateWithRecovery(payload,deps){
   await deps.progress?.(`启动 Explorer 第 ${round}/${limit} 轮定向探索，再尝试缺失用例…\n`);
   try{
    const previous=evidenceSignature(evidence);
-   exploration=await deps.explore({targets:missing,gaps:result.gaps,locatorNotes:payload.locatorNotes||'',round,maxSteps:payload.explorationSteps||6,previousActions:history.flatMap(x=>x.actions||[]),priorEvidence:evidence});
+   exploration=await deps.explore({targets:missing,gaps:result.gaps,locatorNotes:[payload.locatorNotes,payload.generationInstruction].filter(Boolean).join('\n'),round,maxSteps:payload.explorationSteps||6,previousActions:history.flatMap(x=>x.actions||[]),priorEvidence:evidence});
    evidence=exploration.evidence;history.push({evidenceId:exploration.evidenceId,actions:exploration.actions||[],recommendations:exploration.recommendations||[]});
    const retry=await generateAll({...payload,manifest:missing,evidence,previousGaps:result.gaps},deps);
    const merged=appendMissing(result.code,retry.code,payload.manifest);

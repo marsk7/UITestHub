@@ -35,17 +35,27 @@ export async function frameSelectors(frame){
  return null;
 }
 export function evidenceSignature(e){return JSON.stringify({controls:(e.controls||[]).map(c=>[c.framePath,c.nameHint,c.kind,c.value,c.scrollTop,c.candidates.map(x=>[x.expression,x.count,x.visibleCount,x.visible])]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),tables:e.tables||[]});}
+// Model boundary: keep structure and replay paths, never sampled business records.
+const pick=(value,keys)=>Object.fromEntries(keys.filter(k=>value?.[k]!==undefined).map(k=>[k,value[k]]));
+const modelCandidate=c=>pick(c,['expression','count','visibleCount','visible','frameVerified','kind']);
 export function compactEvidence(e){
  if(!e)return e;const seen=new Map();
  for(const c of e.controls||[]){
-  const proven=c.candidates.filter(x=>x.frameVerified!==false&&(x.count===1||x.kind==='collection'));
-  const candidates=(proven.length?proven:c.candidates.slice(0,1)).map(({expression,count,visibleCount,visible,frameVerified,kind})=>({expression,count,visibleCount,visible,frameVerified,kind}));
-  const {candidates:ignored,...details}=c;
-  const value={...details,candidates,prerequisites:c.prerequisites||[]};
-  const key=JSON.stringify([c.framePath,c.nameHint,c.contextLabel,c.kind,c.visible,candidates]);
+  if(c.dataRegion&&!['button','combobox','checkbox'].includes(c.role)&&!['button','input','select'].includes(c.tag))continue;
+  const proven=(c.candidates||[]).filter(x=>x.frameVerified!==false&&(x.count===1||x.kind==='collection'));
+  const candidates=(proven.length?proven:(c.candidates||[]).slice(0,1)).map(modelCandidate);
+  const value={...pick(c,['tag','type','role','kind','label','ariaName','nameHint','id','fieldName','contextLabel','testId','placeholder','visible','disabled','expanded','options','framePath','stateId','usable','owner','direction','columnMappingReliable','rowsSelector','readStrategy']),candidates,prerequisites:c.prerequisites||[]};
+  // Container text concatenates result rows and selected values; its locator is enough.
+  if(['table','select-popup','pagination','pagination-total','current-page','page-size','selected-value','virtual-list'].includes(c.kind))delete value.nameHint;
+  if(c.kind==='selected-value'){delete value.label;delete value.ariaName;}
+  const key=JSON.stringify([value.framePath,value.nameHint,value.contextLabel,value.kind,candidates]);
   if(!seen.has(key)||seen.get(key).prerequisites.length>value.prerequisites.length)seen.set(key,value);
  }
- return{...e,controls:[...seen.values()]};
+ const tables=(e.tables||[]).map(t=>({...pick(t,['selector','framePath','stateId','prerequisites','columnMappingReliable','rowsSelector']),
+  headers:(t.headers||[]).map(h=>pick(h,['index','name','selector','colSpan','rowSpan'])),
+  container:t.container?modelCandidate(t.container):undefined,rowCandidate:t.rowCandidate?modelCandidate(t.rowCandidate):undefined,
+  columns:(t.columns||[]).map(h=>({...pick(h,['index','name','selector','colSpan','rowSpan']),headerCandidate:h.headerCandidate?modelCandidate(h.headerCandidate):undefined,candidate:h.candidate?modelCandidate(h.candidate):undefined}))}));
+ return {...pick(e,['id','projectId','baseURL','entry','url','title','rules','notes']),controls:[...seen.values()],tables,selectedData:e.modelTestData||'',dataPolicy:'仅页面结构；未发送查询结果、样本行或旧版自动测试数据。分页总数与当前值须执行时读取。'};
 }
 
 // Preserve replayable prerequisite paths from earlier observations, with provenance.
