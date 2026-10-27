@@ -1,8 +1,9 @@
-import {list,put} from './db.mjs';
-export async function seed(){
-if((await list('project')).length)return;
-const p=await put('project',{name:'示例 · 人员查询',baseURL:process.env.DEMO_BASE_URL||'http://127.0.0.1:8080',entry:'/demo',description:'内置演示页面，可验证完整执行链路。GCS 请另建项目。',auth:false});
-await put('suite',{projectId:p.id,name:'人员查询 · 冒烟测试',approved:false,code:`import { test, expect } from '@playwright/test';
+import { list, put } from './db.mjs';
+export async function seed() {
+  if ((await list('project')).length) return;
+  const p = await put('project', { name: '示例 · 人员查询', baseURL: process.env.DEMO_BASE_URL || 'http://127.0.0.1:8080', entry: '/demo', description: '内置演示页面，可验证完整执行链路。GCS 请另建项目。', auth: false });
+  await put('suite', {
+    projectId: p.id, name: '人员查询 · 冒烟测试', approved: false, code: `import { test, expect } from '@playwright/test';
 
 test('按姓名查询人员', async ({ page }) => {
   await page.goto('/demo');
