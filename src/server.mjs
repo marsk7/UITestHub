@@ -201,7 +201,7 @@ const server = http.createServer(async (req, res) => {
             err('接口不存在', 404);
         }
         if (m !== 'GET') err('请求方法不支持', 405);
-        const allowed = { '/report': 'report.html', '/report.js': 'report.js', '/': 'index.html', '/login-browser': 'login-browser.html', '/login-browser.js': 'login-browser.js', '/app.js': 'app.js', '/style.css': 'style.css', '/demo': 'demo.html', '/favicon.svg': 'favicon.svg' };
+        const allowed = { '/report': 'report.html', '/report.js': 'report.js', '/': 'index.html', '/login-browser': 'login-browser.html', '/login-browser.js': 'login-browser.js', '/app.js': 'app.js', '/style.css': 'style.css', '/personnel-ui.css': 'personnel-ui.css', '/demo': 'demo.html', '/favicon.svg': 'favicon.svg' };
         if (!allowed[p]) err('页面不存在', 404);
         const file = allowed[p]; res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'");
         res.writeHead(200, { 'Content-Type': file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html; charset=utf-8' }); res.end(await readFile(path.join(ROOT, 'public', file)));

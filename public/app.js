@@ -28,16 +28,121 @@ if (location.pathname === '/demo') {
         if (!state) return; const openTree = new Set([...app.querySelectorAll('details[data-tree][open]')].map(d => d.dataset.tree)); if (role() !== "admin" && ["users", "settings"].includes(page)) page = "overview"; app.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><img src="/favicon.svg" alt=""><div>TestHub<small>UI AUTOMATION</small></div></div><div class="nav-label">工作空间</div><nav class="nav">${Object.entries(names).filter(([k]) => role() === 'admin' || !['users', 'settings'].includes(k)).map(([k, v]) => `<button data-page="${k}" class="${page === k ? 'active' : ''}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[k]}"/></svg>${v}</button>`).join('')}</nav><div class="side-bottom"><span class="avatar">${esc((state.me?.displayName || "管理员").slice(0, 1))}</span>${esc(state.me?.displayName || "管理员")} · ${roles[role()]}<p><small>内部测试工作空间 · v1.4.0</small></p><button data-action="password">修改密码</button><button data-action="logout">退出登录</button></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">测试工作空间 /<strong>${names[page]}</strong></div><div class="worker"><span class="dot ${online() ? 'online' : ''}"></span>${online() ? '执行器在线' : '执行器离线'}</div></header><main class="content">${views[page]()}<div class="footer-note">TestHub · 所有执行统计来自实际任务，未执行的测试不会计为通过。</div></main></div></div>`;
         if (preserveTree) app.querySelectorAll('details[data-tree]').forEach(d => d.open = openTree.has(d.dataset.tree));
         $('#search')?.addEventListener('input', e => { filter = e.target.value; const pos = e.target.selectionStart; render(); $('#search')?.focus(); $('#search')?.setSelectionRange(pos, pos); }); $('#project-filter')?.addEventListener('change', e => { projectFilter = e.target.value; render(); });
+        $('#personnel-filter')?.addEventListener('submit', event => {
+            event.preventDefault();
+            const data = new FormData(event.currentTarget);
+            personnelQuery = String(data.get('query') || '');
+            personnelStatus = String(data.get('status') || '');
+            render(true);
+        });
     }
     const head = (title, desc, actions = '') => `<div class="page-head"><div><h1>${title}</h1><p>${desc}</p></div><div class="actions">${actions}</div></div>`;
     const owns = id => !!id && (state?.me?.ownedProjectIds || []).includes(id);
     const projectRole = id => role() === 'admin' || owns(id) ? 'owner' : state?.me?.projectRoles ? state.me.projectRoles[id] || null : (state?.me?.projectIds || []).includes(id) ? (role() === 'viewer' ? 'viewer' : 'legacy') : null;
     const canWrite = id => ['owner', 'editor', 'legacy'].includes(projectRole(id));
     const canExecute = id => ['owner', 'editor'].includes(projectRole(id));
-    function organizationTree(users, renderRow, level = 0, path = []) {
-        if (level === 3) return users.map(renderRow).join('');
-        const key = ['company', 'department', 'section'][level], label = ['未分配公司', '未分配部门', '未分配处室'][level];
-        return [...groups(users, u => u[key] || label)].map(([name, rows]) => `<details data-tree="org-${esc(JSON.stringify([...path, name]))}" open><summary>${esc(name)} · ${rows.length} 人</summary><div style="padding-left:18px">${organizationTree(rows, renderRow, level + 1, [...path, name])}</div></details>`).join('');
+    let personnelSelection = null;
+    let personnelQuery = '';
+    let personnelStatus = '';
+
+    function ensurePersonnelStyles() {
+        if (document.getElementById('personnel-styles')) return;
+        const link = document.createElement('link');
+        link.id = 'personnel-styles';
+        link.rel = 'stylesheet';
+        link.href = '/personnel-ui.css';
+        document.head.appendChild(link);
+    }
+
+    function buildOrganizationTree(users) {
+        const root = { key: 'root', users: [], people: [], children: [], path: [] };
+        for (const user of users) {
+            let node = root;
+            const path = [];
+            node.users.push(user);
+            for (const field of ['company', 'department', 'section']) {
+                const name = String(user[field] || '').trim();
+                if (!name) continue;
+                path.push([field, name]);
+                const key = JSON.stringify(path);
+                let child = node.children.find(item => item.key === key);
+                if (!child) {
+                    child = { key, field, name, path: [...path], users: [], people: [], children: [] };
+                    node.children.push(child);
+                }
+                child.users.push(user);
+                node = child;
+            }
+            node.people.push(user);
+        }
+        return root;
+    }
+
+    function organizationTree(users, renderRow, selectable = false) {
+        ensurePersonnelStyles();
+        const labels = { company: '公司', department: '部门', section: '处室' };
+        const renderNode = node => {
+            const branches = node.children.map(child => {
+                const selected = selectable && personnelSelection?.type === 'org' && personnelSelection.key === child.key;
+                const title = `<span class="org-kind org-kind-${child.field}">${labels[child.field]}</span><span class="org-name">${esc(child.name)}</span><span class="org-count">${child.users.length}</span>`;
+                return `<details class="org-node" data-tree="org-${esc(child.key)}" open>
+                    <summary class="org-summary"><span class="org-chevron" aria-hidden="true"></span>${selectable
+                        ? `<button type="button" class="org-select ${selected ? 'is-selected' : ''}" data-action="personnel-org" data-id="${esc(child.key)}" aria-pressed="${selected}">${title}</button>`
+                        : `<span class="org-title">${title}</span>`}</summary>
+                    <div class="org-children">${renderNode(child)}</div>
+                </details>`;
+            }).join('');
+            return branches + node.people.map(user => `<div class="org-person">${renderRow(user)}</div>`).join('');
+        };
+        return `<div class="org-tree">${renderNode(buildOrganizationTree(users))}</div>`;
+    }
+
+    function renderPersonnelManager() {
+        const users = state.users || [];
+        const root = buildOrganizationTree(users);
+        const nodes = [];
+        const collect = node => { nodes.push(node); node.children.forEach(collect); };
+        collect(root);
+        let selectedUsers = users;
+        let title = '全部人员';
+        if (personnelSelection?.type === 'org') {
+            const node = nodes.find(item => item.key === personnelSelection.key);
+            if (node) { selectedUsers = node.users; title = node.path.map(item => item[1]).join(' / '); }
+            else personnelSelection = null;
+        } else if (personnelSelection?.type === 'person') {
+            const user = users.find(item => item.id === personnelSelection.key);
+            if (user) { selectedUsers = [user]; title = user.displayName; }
+            else personnelSelection = null;
+        }
+        const query = personnelQuery.trim().toLowerCase();
+        const rows = selectedUsers.filter(user =>
+            (!query || [user.domainAccount, user.username, user.displayName, user.company, user.department, user.section]
+                .some(value => String(value || '').toLowerCase().includes(query))) &&
+            (!personnelStatus || (personnelStatus === 'enabled' ? user.enabled : !user.enabled))
+        );
+        return head('人员管理', '按组织查看人员，支持域账号、姓名和组织名称搜索。',
+            btn('导入人员', 'import-users') + btn('＋ 添加账号', 'new-user', '', true)) + `
+            <div class="personnel-layout">
+                <aside class="personnel-org panel" aria-label="组织机构">
+                    <div class="panel-head"><h2>组织机构</h2><span class="quiet">${users.length} 人</span></div>
+                    <div class="personnel-org-body">
+                        <button type="button" class="org-all ${!personnelSelection ? 'is-selected' : ''}" data-action="personnel-all" aria-pressed="${!personnelSelection}">全部人员<span class="org-count">${users.length}</span></button>
+                        ${organizationTree(users, user => {
+                            const selected = personnelSelection?.type === 'person' && personnelSelection.key === user.id;
+                            return `<button type="button" class="org-person-button ${selected ? 'is-selected' : ''}" data-action="personnel-person" data-id="${esc(user.id)}" aria-pressed="${selected}"><span class="org-avatar" aria-hidden="true">${esc((user.displayName || '?').slice(0, 1))}</span><span class="org-name">${esc(user.displayName)}</span><small>${esc(user.domainAccount || user.username)}</small></button>`;
+                        }, true)}
+                    </div>
+                </aside>
+                <section class="personnel-list panel" aria-label="人员列表">
+                    <form id="personnel-filter" class="personnel-filter">
+                        <label>账号 / 姓名 / 组织<input name="query" value="${esc(personnelQuery)}" placeholder="输入搜索内容"></label>
+                        <label>状态<select name="status" aria-label="状态"><option value="">全部状态</option><option value="enabled" ${personnelStatus === 'enabled' ? 'selected' : ''}>启用</option><option value="disabled" ${personnelStatus === 'disabled' ? 'selected' : ''}>停用</option></select></label>
+                        <div class="actions"><button type="submit" class="primary">查询</button><button type="button" data-action="personnel-reset">重置</button></div>
+                    </form>
+                    <div class="personnel-scope"><strong>${esc(title)}</strong><span class="quiet">${rows.length} 人</span></div>
+                    <div class="table-wrap"><table class="personnel-table"><thead><tr><th>域账号</th><th>姓名</th><th>公司</th><th>部门</th><th>处室</th><th>平台角色</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows.map(user => `<tr><td>${esc(user.domainAccount || user.username)}</td><td>${esc(user.displayName)}</td><td>${esc(user.company || '—')}</td><td>${esc(user.department || '—')}</td><td>${esc(user.section || '—')}</td><td>${esc(roles[user.role] || user.role)}</td><td><span class="tag ${user.enabled ? 'passed' : ''}">${user.enabled ? '启用' : '停用'}</span></td><td>${btn('编辑 / 重置密码', 'edit-user', user.id)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">没有匹配的人员</td></tr>'}</tbody></table></div>
+                </section>
+            </div>`;
     }
     function actionProject(action, id = '') {
         const key = id.split(':')[0];
@@ -47,7 +152,7 @@ if (location.pathname === '/demo') {
     }
     function canAction(action, id = '') {
         if (role() === 'admin') return true;
-        if (['new-user', 'edit-user', 'import-users'].includes(action)) return false;
+        if (action.startsWith('personnel-') || ['new-user', 'edit-user', 'import-users'].includes(action)) return false;
         const pid = actionProject(action, id), permission = projectRole(pid);
         if (action === 'project-members') return owns(pid);
         if (action === 'new-project') return true;
@@ -88,7 +193,7 @@ if (location.pathname === '/demo') {
     function scriptTree(items) { if (!items.length) return '<div class="empty">暂无模块，请从已审核计划建立模块，或添加手工脚本。</div>'; return [...groups(items, x => x.projectId)].map(([pid, suites]) => `<details class="tree-project" data-tree="project-${esc(pid)}" open><summary>${esc(projectName(pid))} · ${suites.length} 个模块 / 版本</summary>${suites.map(s => `<details class="tree-module" data-tree="suite-${esc(s.id)}"><summary>${esc(s.moduleName || s.name)} · ${esc(s.purpose || s.name)} · r${s.revision || 1} · #${esc(s.id.slice(0, 8))}</summary><div class="actions">${btn('查看 / 编辑', 'edit-suite', s.id)}${s.manifest && !s.coverage?.complete ? btn('生成模块脚本', 'missing-cases', s.id, true) : ''}${btn('检查 / 试运行', 'validate', s.id)}${s.approved ? btn('运行模块', 'run', s.id) : btn('审核通过', 'approve-suite', s.id)}</div>${(s.caseInventory || s.coverage?.rows || []).map(c => `<div class="list-item case-row"><div><strong>${esc(c.id + ' ' + c.title)}</strong><p>${c.status === 'generated' ? '已生成' : c.status === 'duplicate' ? '重复，需修正' : '未生成'}</p></div><div class="actions">${c.status === 'missing' ? btn('生成此用例', 'generate-one', s.id + ':' + c.id) : c.declarationId != null ? btn('查看脚本', 'case-edit', s.id + ':' + c.declarationId) : ''}</div></div>`).join('') || '<p class="quiet">尚无可识别用例，可在查看/编辑中维护脚本。</p>'}</details>`).join('')}</details>`).join(''); }
     function runTree(items) { if (!items.length) return jobTable([]); return [...groups(items, x => x.projectId)].map(([pid, jobs]) => `<details class="tree-project" data-tree="project-${esc(pid)}" open><summary>${esc(projectName(pid))} · ${jobs.length} 个任务</summary>${[...groups(jobs, x => x.moduleId || x.moduleName || 'project')].map(([mid, js]) => `<details class="tree-module" data-tree="jobs-${esc(pid)}-${esc(mid)}"><summary>${esc(js[0].moduleName || '项目任务 / 历史未归属模块')} · ${js.length} 个任务</summary>${jobTable(js)}</details>`).join('')}</details>`).join(''); }
     const views = {
-        users() { return head('人员管理', '按公司、部门、处室分类；组织信息用于人员管理，项目权限由项目成员设置。', btn('导入人员', 'import-users') + btn('＋ 添加账号', 'new-user', '', true)) + `<div class="panel">${organizationTree(state.users || [], u => `<div class="list-item"><div><strong>${esc(u.displayName)} · ${esc(u.domainAccount || u.username)}</strong><p>${roles[u.role]} · ${u.enabled ? '启用' : '停用'}</p></div>${btn('编辑 / 权限 / 重置密码', 'edit-user', u.id)}</div>`) || '<p>暂无人员</p>'}</div>`; },
+        users() { return renderPersonnelManager(); },
         overview() { const runs = state.jobs.filter(j => j.kind === 'run'), done = runs.filter(j => ['passed', 'failed'].includes(j.status)), rate = done.length ? Math.round(done.filter(j => j.status === 'passed').length / done.length * 100) + '%' : '—'; return head('工作概览', '从测试设计到结果分析，每一步都可审核、可追踪。', btn('新建测试计划', 'new-plan', '', true)) + `<div class="stats">${[['测试项目', state.projects.length, '独立环境与登录态'], ['待审核脚本', state.suites.filter(s => !s.approved).length, '审核通过后方可执行'], ['执行中 / 等待', state.jobs.filter(j => ['running', 'queued'].includes(j.status)).length, online() ? '执行器正常接收任务' : '请启动 Worker 服务'], ['任务通过率', rate, `最近 ${done.length} 次有效测试执行`]].map(([a, b, c]) => `<div class="stat"><span class="stat-label">${a}</span><strong>${b}</strong><small>${c}</small></div>`).join('')}</div><div class="panel"><div class="panel-head"><h2>测试工作流</h2><span class="quiet">人工审核 · 确定性执行</span></div><div class="flow">${[['01 / PLANNER', '设计测试计划', '输入需求与业务规则'], ['02 / EXPLORE + GENERATOR', '采集并生成脚本', '确认页面依据与业务规则'], ['03 / PLAYWRIGHT', '执行已审核测试', '记录真实断言与证据'], ['04 / REPORTER', '分析测试结果', '区分缺陷、脚本与环境问题']].map(x => `<div class="flow-step"><b>${x[0]}</b><strong>${x[1]}</strong><span>${x[2]}</span></div>`).join('')}</div></div><div class="split"><div class="panel"><div class="panel-head"><h2>最近任务</h2><button data-page="runs">全部任务</button></div>${jobTable(state.jobs.slice(0, 5))}</div><div class="panel"><div class="panel-head"><h2>开始一次测试</h2><span class="tag">快速开始</span></div><div class="list-item"><div><strong>01 配置目标环境</strong><p>项目地址可独立修改，无需修改部署文件。</p></div>${btn('配置', 'go-projects')}</div><div class="list-item"><div><strong>02 审核测试脚本</strong><p>内置 3 条人员查询测试可直接试跑。</p></div>${btn('审核', 'go-suites')}</div><div class="list-item"><div><strong>03 查看证据</strong><p>执行日志、JSON 报告与失败 trace。</p></div>${btn('查看', 'go-runs')}</div><div class="panel-body"><div class="note">${state.model.configured ? '模型接口已配置。生成内容仍需人工审核。' : '尚未配置模型。可先使用内置示例或手工编写脚本，验证执行流程。'}</div></div></div></div>`; },
         projects() { return head('项目与环境', '创建人拥有项目全流程权限；也可访问管理员分配的项目。', btn('＋ 新建项目', 'new-project', '', true)) + `<div class="project-grid">${state.projects.map(p => `<article class="project-card"><div class="project-icon">${esc(p.name.slice(0, 1))}</div><h3>${esc(p.name)}</h3><p>${esc(p.description || '暂无项目说明')}</p><div class="project-url">${esc(p.baseURL)}<br>${esc(p.entry)}</div><span class="tag ${p.auth ? 'passed' : ''}">${p.auth ? '已配置登录态' : '未配置登录态'}</span>${owns(p.id) ? '<span class="tag">我的项目</span>' : ''}<div class="actions">${btn('项目成员', 'project-members', p.id)}${btn('编辑项目', 'edit-project', p.id)}${btn('登录态', 'web-auth', p.id, true)}${btn('页面采集与依据', 'evidence-list', p.id)}</div></article>`).join('')}</div>`; },
         plans() { if (trashMode) return recycleView('plans'); return head('测试计划', '需求和页面依据共同决定覆盖范围；审核后才能生成脚本。', btn('回收站', 'trash-plans') + btn('手工编写', 'manual-plan') + btn('＋ AI 生成计划', 'new-plan', '', true)) + toolbar() + `<div class="panel">${filtered(state.plans).length ? filtered(state.plans).map(p => `<div class="list-item"><div><strong>${esc(p.name)}</strong><p>${esc(projectName(p.projectId))} · ${time(p.updated)} · ${p.approved ? '已审核' : '待审核'}</p>${recordMeta(p)}</div><div class="actions">${btn('查看 / 编辑', 'edit-plan', p.id)}${p.approved ? btn('建立用例模块', 'module-from-plan', p.id) : ''}${!p.approved ? btn('审核通过', 'approve-plan', p.id) : btn('生成脚本', 'generate', p.id, true)}</div></div>`).join('') : '<div class="empty"><strong>建立第一份测试计划</strong>输入需求生成，或粘贴已有的测试用例。</div>'}</div>`; },
@@ -115,6 +220,17 @@ if (location.pathname === '/demo') {
     }
     async function action(a, id) {
         editingProjectId = actionProject(a, id); if (!canAction(a, id)) throw new Error('当前账号无此操作权限');
+        if (a === 'personnel-org' || a === 'personnel-person') {
+            personnelSelection = { type: a === 'personnel-org' ? 'org' : 'person', key: id };
+            render(true);
+            return;
+        }
+        if (a === 'personnel-all' || a === 'personnel-reset') {
+            personnelSelection = null;
+            if (a === 'personnel-reset') { personnelQuery = ''; personnelStatus = ''; }
+            render(true);
+            return;
+        }
         if (a === 'generate-one') { const [sid, cid] = id.split(':'); return action('missing-cases', sid + '::' + cid); }
         if (a === 'new-module') { const plans = state.plans.filter(p => p.approved && canWrite(p.projectId)); return open('从测试计划建立功能模块', plans.map(p => `<div class="list-item"><div><strong>${esc(p.name)}</strong><p>${esc(projectName(p.projectId))}</p></div>${btn('建立模块', 'module-from-plan', p.id)}</div>`).join('') || '<p>请先建立并审核测试计划。</p>', null); }
         if (a === 'module-from-plan') {

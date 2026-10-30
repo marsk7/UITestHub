@@ -1,0 +1,40 @@
+/* Personnel management: organization tree and user table */
+.personnel-layout { display: grid; grid-template-columns: minmax(260px, 310px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.personnel-layout > .panel { margin-bottom: 0; min-width: 0; }
+.personnel-org .panel-head { padding: 16px; }
+.personnel-org-body { padding: 10px 8px; max-height: 70vh; overflow: auto; }
+.personnel-filter { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 18px; border-bottom: 1px solid var(--line); }
+.personnel-filter label { margin: 0; min-width: 130px; flex: 1 1 130px; }
+.personnel-filter label:first-child { flex: 2 1 220px; }
+.personnel-scope { display: flex; gap: 16px; align-items: center; padding: 14px 18px; }
+.personnel-scope strong { overflow-wrap: anywhere; }
+.personnel-table th, .personnel-table td { padding: 12px 14px; }
+.personnel-table td { overflow-wrap: anywhere; }
+.personnel-table td:last-child { white-space: nowrap; }
+.org-tree { padding: 2px 0; text-align: left; }
+.org-tree .org-node { margin: 2px 0; border: 0; border-radius: 0; padding: 0; background: transparent; }
+.org-tree .org-summary { display: flex; align-items: center; gap: 3px; padding: 0; list-style: none; cursor: pointer; background: transparent; }
+.org-tree .org-summary::-webkit-details-marker { display: none; }
+.org-chevron { display: block; flex: 0 0 6px; width: 6px; height: 6px; border-right: 1.5px solid #909399; border-bottom: 1.5px solid #909399; transform: rotate(-45deg); margin: 0 6px 0 8px; transition: transform .15s; }
+.org-node[open] > .org-summary > .org-chevron { transform: rotate(45deg); }
+.org-tree .org-children { margin-left: 16px; padding: 3px 0 3px 12px; border-left: 1px solid #dce3ee; }
+.org-select, .org-title { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 8px 6px; font-size: 13px; color: #303133; }
+.org-tree .org-select { border: 0; border-radius: 5px; background: transparent; text-align: left; font-weight: 500; white-space: normal; }
+.org-name { min-width: 0; overflow-wrap: anywhere; }
+.org-kind { flex: 0 0 auto; padding: 1px 5px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.org-kind-company { background: #eaf2ff; color: #3564b4; }
+.org-kind-department { background: #e9f6f0; color: #287f60; }
+.org-kind-section { background: #fff3df; color: #9c6a16; }
+.org-count { flex: 0 0 auto; margin-left: auto; color: #909399; font-size: 12px; font-weight: 400; }
+.org-tree .org-person { margin: 2px 0; }
+.org-tree .org-person > .list-item { margin: 0; padding: 9px 8px; border-bottom: 1px solid #f0f2f5; }
+.org-tree .org-person > .list-item > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.org-tree .org-person > .list-item strong { font-size: 13px; }
+.org-tree .org-person > .list-item p { margin: 4px 0 0; font-size: 12px; }
+.org-person-button, .org-all { display: flex; width: 100%; align-items: center; gap: 8px; border: 0; border-radius: 5px; padding: 8px; background: transparent; text-align: left; font-size: 13px; font-weight: 400; white-space: normal; }
+.org-person-button small { margin-left: auto; color: #909399; font-size: 11px; overflow-wrap: anywhere; }
+.org-avatar { display: inline-flex; justify-content: center; align-items: center; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; background: #eef1f6; color: #64748b; font-size: 11px; }
+.org-select:hover, .org-person-button:hover, .org-all:hover { background: #f3f7fc; }
+.org-tree .is-selected, .personnel-org .org-all.is-selected { color: #2879c7; background: #ecf5ff; font-weight: 600; }
+.org-tree .org-select:focus-visible, .org-person-button:focus-visible, .org-all:focus-visible, .org-summary:focus-visible { outline: 2px solid #409eff; outline-offset: 1px; }
+@media (max-width: 1050px) { .personnel-layout { grid-template-columns: 1fr; } .personnel-org-body { max-height: 320px; } }
