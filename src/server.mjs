@@ -1,6 +1,7 @@
+import { importPersonnel, memberDirectory, validateMembers } from './personnel.mjs';
 import { moduleCases } from './module-tree.mjs';
 import { caseResults } from './run-results.mjs';
-import { canProject, requireProject, requireAdmin, requireExecution, permitRoute, publicAccount } from './access.mjs';
+import { canProject, withProjectAccess, requireProjectManager, requireProject, requireAdmin, requireExecution, permitRoute, publicAccount } from './access.mjs';
 import { initAccounts, authenticate, userById, listUsers, saveUser, changePassword } from './accounts.mjs';
 import { verificationSettings } from './generation-verifier.mjs';
 import { createReportService, listArtifacts, sendArtifact } from './report-service.mjs';
@@ -27,12 +28,12 @@ const loginSessions = new LoginSessions({
         const current = await get(project.id, 'project'); if (!current || current.baseURL !== project.baseURL) throw Object.assign(new Error('项目环境已修改，请重新登录'), { status: 409 });
         const dir = path.join(DATA, 'auth'); await mkdir(dir, { recursive: true, mode: 0o700 }); const tmp = path.join(dir, project.id + '.' + randomBytes(8).toString('hex') + '.tmp');
         try { await writeFile(tmp, JSON.stringify(storage), { mode: 0o600 }); await rename(tmp, path.join(dir, project.id + '.json')); } finally { await rm(tmp, { force: true }); }
-        await put('project', { ...current, auth: true, authSavedAt: new Date().toISOString() }, current.id);
+        await replaceRecord(current.id, current.updated, { ...current, auth: true, authSavedAt: new Date().toISOString() });
     }
 });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { await loginSessions.dispose(); process.exit(0); });
 
-async function sessionUser(token) { const s = sessions.get(token); if (!s || s.expiresAt <= Date.now()) { sessions.delete(token); return null; } const user = await userById(s.userId); if (!user?.enabled || user.sessionVersion !== s.version) { sessions.delete(token); await loginSessions.closeOwner(token); return null; } return { ...user, ownedProjectIds: (await list('project')).filter(p => p.ownerId === user.id).map(p => p.id) }; }
+async function sessionUser(token) { const s = sessions.get(token); if (!s || s.expiresAt <= Date.now()) { sessions.delete(token); return null; } const user = await userById(s.userId); if (!user?.enabled || user.sessionVersion !== s.version) { sessions.delete(token); await loginSessions.closeOwner(token); return null; } return withProjectAccess(user, await list('project')); }
 async function revokeSessions(userId) { for (const [token, s] of sessions) if (s.userId === userId) { sessions.delete(token); await loginSessions.closeOwner(token); } }
 await init();
 await initAccounts(secret);
@@ -73,6 +74,22 @@ const server = http.createServer(async (req, res) => {
             const must = async (id, kind, includeDeleted = false) => { const record = await get(id, kind); if (!record || record.deletedAt && !includeDeleted) err('记录不存在或已删除', 404); requireProject(actor, kind === 'project' ? record.id : record.projectId); return record; };
             const job = async id => { const j = await getJob(id); if (!j) err('任务不存在', 404); requireProject(actor, j.payload.projectId); return j; };
             const enqueue = async (kind, payload) => { requireProject(actor, payload.projectId); if (payload.liveValidation) requireExecution(actor, payload.projectId); let module = payload.suite || payload.plan; if (!module && payload.suiteId) module = await get(payload.suiteId, 'suite'); return queueJob(kind, { ...payload, moduleId: payload.moduleId || module?.planId || module?.id || null, moduleName: payload.moduleName || module?.moduleName || module?.name || null, requestedBy: actor.id }); };
+            if (p === '/api/users/import' && m === 'POST') {
+                requireAdmin(actor); const b = await body(req);
+                return send(res, 200, await importPersonnel(b.csv, b.initialPassword, actor.id, revokeSessions));
+            }
+            const membersRoute = p.match(/^\/api\/projects\/([\w-]+)\/members$/);
+            if (membersRoute) {
+                const project = await must(membersRoute[1], 'project'); requireProjectManager(actor, project.id);
+                if (m === 'GET') return send(res, 200, { version: project.updated, ownerId: project.ownerId, users: memberDirectory(await listUsers(), project) });
+                if (m === 'PUT') {
+                    const b = await body(req); if (b.version !== project.updated) err('项目已变化，请刷新成员列表', 409);
+                    const members = validateMembers(b.members, await listUsers(), project);
+                    const saved = await replaceRecord(project.id, project.updated, { ...project, members });
+                    return send(res, 200, { ok: true, version: saved.updated });
+                }
+                err('请求方法不支持', 405);
+            }
             if (p === '/api/users' && m === 'GET') { requireAdmin(actor); return send(res, 200, await listUsers()); }
             if ((p === '/api/users' && m === 'POST') || (/^\/api\/users\/[\w-]+$/.test(p) && m === 'PATCH')) {
                 requireAdmin(actor); const b = await body(req); for (const projectId of b.projectIds || []) await must(projectId, 'project');
@@ -83,9 +100,9 @@ const server = http.createServer(async (req, res) => {
             if (p === '/api/state' && m === 'GET') {
                 const projects = (await list('project')).filter(x => canProject(actor, x.id)), visible = x => canProject(actor, x.projectId);
                 const plans = (await list('plan')).filter(visible), suites = (await list('suite')).filter(visible);
-                return send(res, 200, { me: publicAccount(actor), projects, plans: plans.filter(x => !x.deletedAt), suites: suites.filter(x => !x.deletedAt).map(s => ({ ...s, caseInventory: moduleCases(s) })), trash: { plans: plans.filter(x => x.deletedAt), suites: suites.filter(x => x.deletedAt) }, evidence: (await list('evidence')).filter(visible).map(({ controls, tables, frames, ...e }) => e), jobs: (await jobs(actor.role === 'admin' ? undefined : [...new Set([...actor.projectIds, ...actor.ownedProjectIds])])).filter(x => visible(x.payload)).map(({ payload, log, ...j }) => ({ ...j, ...jobDisplay(j.kind, payload) })), workers: await query('SELECT * FROM workers'), model: { configured: !!process.env.LLM_BASE_URL && !!process.env.LLM_MODEL, model: process.env.LLM_MODEL || '', baseURL: actor.role === 'admin' ? process.env.LLM_BASE_URL || '' : '' } });
+                return send(res, 200, { me: publicAccount(actor), projects, plans: plans.filter(x => !x.deletedAt), suites: suites.filter(x => !x.deletedAt).map(s => ({ ...s, caseInventory: moduleCases(s) })), trash: { plans: plans.filter(x => x.deletedAt), suites: suites.filter(x => x.deletedAt) }, evidence: (await list('evidence')).filter(visible).map(({ controls, tables, frames, ...e }) => e), jobs: (await jobs(actor.role === 'admin' ? undefined : projects.map(p => p.id))).filter(x => visible(x.payload)).map(({ payload, log, ...j }) => ({ ...j, ...jobDisplay(j.kind, payload) })), workers: await query('SELECT * FROM workers'), model: { configured: !!process.env.LLM_BASE_URL && !!process.env.LLM_MODEL, model: process.env.LLM_MODEL || '', baseURL: actor.role === 'admin' ? process.env.LLM_BASE_URL || '' : '' } });
             }
-            if (p === '/api/projects' && m === 'POST') return send(res, 201, await put('project', { ...projectInput(await body(req)), auth: false, ownerId: actor.id }));
+            if (p === '/api/projects' && m === 'POST') return send(res, 201, await put('project', { ...projectInput(await body(req)), auth: false, ownerId: actor.id, members: [] }));
             let match;
             if ((match = p.match(/^\/api\/(plans|suites)\/([\w-]+)(?:\/(restore))?$/)) && ((m === 'DELETE' && !match[3]) || (m === 'POST' && match[3] === 'restore'))) { await must(match[2], match[1] === 'plans' ? 'plan' : 'suite', true); return send(res, 200, await recycleRecord(match[2], match[1] === 'plans' ? 'plan' : 'suite', m === 'POST')); }
             if ((match = p.match(/^\/api\/(plans|suites)\/([\w-]+)\/metadata$/)) && m === 'PATCH') {
@@ -114,7 +131,7 @@ const server = http.createServer(async (req, res) => {
                 err('请求方法不支持', 405);
             }
 
-            if ((match = p.match(/^\/api\/projects\/([\w-]+)$/)) && m === 'PUT') { const old = await must(match[1], 'project'), input = projectInput(await body(req)); return send(res, 200, await put('project', { ...old, ...input, ...(input.baseURL !== old.baseURL ? { auth: false, authSavedAt: null } : {}) }, old.id)); }
+            if ((match = p.match(/^\/api\/projects\/([\w-]+)$/)) && m === 'PUT') { const old = await must(match[1], 'project'), input = projectInput(await body(req)); return send(res, 200, await replaceRecord(old.id, old.updated, { ...old, ...input, ...(input.baseURL !== old.baseURL ? { auth: false, authSavedAt: null } : {}) })); }
             if (p === '/api/explore' && m === 'POST') {
                 const b = await body(req), pr = await must(b.projectId, 'project'); let storageState = null;
                 if (pr.auth) storageState = JSON.parse(await readFile(path.join(DATA, 'auth', pr.id + '.json'), 'utf8'));

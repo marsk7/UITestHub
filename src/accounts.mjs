@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { query, pool, now } from './db.mjs';
 import { accountInput, hashPassword, verifyPassword, publicAccount, deny } from './access.mjs';
-const decode = r => r ? { id: r.id, username: r.username, displayName: r.display_name, role: r.role, enabled: !!r.enabled, projectIds: JSON.parse(r.project_ids), passwordHash: r.password_hash, sessionVersion: r.session_version, created: r.created, updated: r.updated } : null;
+const decode = r => r ? { id: r.id, username: r.username, domainAccount: r.username, ...JSON.parse(r.profile_json || '{}'), displayName: r.display_name, role: r.role, enabled: !!r.enabled, projectIds: JSON.parse(r.project_ids), passwordHash: r.password_hash, sessionVersion: r.session_version, created: r.created, updated: r.updated } : null;
 export async function initAccounts(password) {
     await query(`CREATE TABLE IF NOT EXISTS users(id VARCHAR(36) PRIMARY KEY,username VARCHAR(64) NOT NULL UNIQUE,display_name VARCHAR(100) NOT NULL,role VARCHAR(16) NOT NULL,enabled TINYINT NOT NULL,project_ids LONGTEXT NOT NULL,password_hash VARCHAR(255) NOT NULL,session_version INT NOT NULL DEFAULT 1,created CHAR(24) NOT NULL,updated CHAR(24) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`);
+    // Existing users retain their accounts; add only organization metadata.
+    if (!(await query("SHOW COLUMNS FROM users LIKE 'profile_json'")).length) { try { await query('ALTER TABLE users ADD COLUMN profile_json LONGTEXT NULL'); } catch (e) { if (e.code !== 'ER_DUP_FIELDNAME') throw e; } }
     if (!(await query('SELECT id FROM users LIMIT 1')).length) {
         const hash = await hashPassword(password), t = now();
         await query("INSERT IGNORE INTO users(id,username,display_name,role,enabled,project_ids,password_hash,created,updated) VALUES(?,'admin','管理员','admin',1,'[]',?,?,?)", [randomUUID(), hash, t, t]);
@@ -30,9 +32,11 @@ export async function saveUser(input, { id, version, actorId } = {}) {
         if (old && value.username !== old.username) deny('账号名不可修改', 400);
         if (old && old.id === actorId && (!value.enabled || value.role !== 'admin')) deny('不能停用或降低当前管理员自身权限', 400);
         if (old?.role === 'admin' && old.enabled && (!value.enabled || value.role !== 'admin') && !rows.some(r => r.id !== id && r.role === 'admin' && r.enabled)) deny('至少保留一名启用的管理员', 409);
+        for (const key of ['company', 'department', 'section']) if (old && input[key] === undefined) value[key] = old[key] || '';
+        const profile = JSON.stringify({ company: value.company, department: value.department, section: value.section });
         const t = new Date(Math.max(Date.now(), old ? Date.parse(old.updated) + 1 : 0)).toISOString();
-        if (old) await c.execute('UPDATE users SET display_name=?,role=?,enabled=?,project_ids=?,password_hash=?,session_version=session_version+1,updated=? WHERE id=?', [value.displayName, value.role, value.enabled ? 1 : 0, JSON.stringify(value.projectIds), passwordHash || old.passwordHash, t, id]);
-        else { id = randomUUID(); await c.execute('INSERT INTO users(id,username,display_name,role,enabled,project_ids,password_hash,created,updated) VALUES(?,?,?,?,?,?,?,?,?)', [id, value.username, value.displayName, value.role, value.enabled ? 1 : 0, JSON.stringify(value.projectIds), passwordHash, t, t]); }
+        if (old) await c.execute('UPDATE users SET display_name=?,role=?,enabled=?,project_ids=?,password_hash=?,profile_json=?,session_version=session_version+1,updated=? WHERE id=?', [value.displayName, value.role, value.enabled ? 1 : 0, JSON.stringify(value.projectIds), passwordHash || old.passwordHash, profile, t, id]);
+        else { id = randomUUID(); await c.execute('INSERT INTO users(id,username,display_name,role,enabled,project_ids,password_hash,created,updated,profile_json) VALUES(?,?,?,?,?,?,?,?,?,?)', [id, value.username, value.displayName, value.role, value.enabled ? 1 : 0, JSON.stringify(value.projectIds), passwordHash, t, t, profile]); }
         await c.commit(); return publicAccount({ ...old, ...value, id, created: old?.created || t, updated: t });
     } catch (e) { await c.rollback(); if (e.code === 'ER_DUP_ENTRY') deny('账号名已存在', 409); throw e; } finally { c.release(); }
 }

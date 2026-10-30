@@ -13,6 +13,7 @@ for (const id of ['p1', 'p2']) {
 export async function init() { }
 export async function query(sql, args = []) {
     if (sql.startsWith('CREATE TABLE') || sql === 'SELECT 1') return [];
+    if (sql.startsWith('SHOW COLUMNS')) return [{ Field: 'profile_json' }];
     if (sql === 'SELECT * FROM workers') return [];
     if (sql === 'SELECT id FROM users LIMIT 1') return users.slice(0, 1);
     if (sql.startsWith('SELECT * FROM users')) {
@@ -25,10 +26,10 @@ export async function query(sql, args = []) {
     }
     if (sql.startsWith('INSERT INTO users')) {
         if (users.some(u => u.username === args[1])) throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' });
-        users.push(Object.fromEntries(['id', 'username', 'display_name', 'role', 'enabled', 'project_ids', 'password_hash', 'created', 'updated'].map((k, i) => [k, args[i]]).concat([['session_version', 1]]))); return { affectedRows: 1 };
+        users.push(Object.fromEntries(['id', 'username', 'display_name', 'role', 'enabled', 'project_ids', 'password_hash', 'created', 'updated', 'profile_json'].map((k, i) => [k, args[i]]).concat([['session_version', 1]]))); return { affectedRows: 1 };
     }
     if (sql.startsWith('UPDATE users SET display_name=')) {
-        const u = users.find(u => u.id === args[6]); Object.assign(u, Object.fromEntries(['display_name', 'role', 'enabled', 'project_ids', 'password_hash', 'updated'].map((k, i) => [k, args[i]]))); u.session_version++; return { affectedRows: 1 };
+        const u = users.find(u => u.id === args[7]); Object.assign(u, Object.fromEntries(['display_name', 'role', 'enabled', 'project_ids', 'password_hash', 'profile_json', 'updated'].map((k, i) => [k, args[i]]))); u.session_version++; return { affectedRows: 1 };
     }
     if (sql.startsWith('UPDATE users SET password_hash=')) {
         const u = users.find(u => u.id === args[2] && u.session_version === args[3]); if (!u) return { affectedRows: 0 }; u.password_hash = args[0]; u.updated = args[1]; u.session_version++; return { affectedRows: 1 };

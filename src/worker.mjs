@@ -1,5 +1,5 @@
 import { caseResults } from './run-results.mjs';
-import { canProject, ownsProject } from './access.mjs';
+import { withProjectAccess, mayRunJob } from './access.mjs';
 import { userById } from './accounts.mjs';
 import { checkAssertionContract } from './assertion-contract.mjs';
 import { verifyGeneratedCase, validationSummary, generationOutcome } from './generation-verifier.mjs';
@@ -26,11 +26,20 @@ const beat = poll(async () => { await lock.execute('SELECT 1'); await query("UPD
 function kill() { if (child) { try { process.kill(-child.pid, 'SIGTERM'); } catch { } setTimeout(() => { if (child) try { process.kill(-child.pid, 'SIGKILL'); } catch { } }, 2000).unref(); } }
 for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => { stopping = true; kill(); });
 async function taskCancelled(j) {
-    const latest = await job(j.id); if (stopping || latest?.cancel) return true;
-    if (!j.payload.requestedBy) return false; // Pre-account migration jobs were administrator submissions.
-    let user = await userById(j.payload.requestedBy); const project = await get(j.payload.projectId, 'project'); if (user) user = { ...user, ownedProjectIds: project?.ownerId === user.id ? [project.id] : [] };
-    const allowed = canProject(user, j.payload.projectId) && (user.role !== 'viewer' || ownsProject(user, j.payload.projectId)) && (!(['validate'].includes(j.kind) || j.payload.liveValidation) || user.role === 'admin' || ownsProject(user, j.payload.projectId));
-    if (!allowed) { await query('UPDATE jobs SET cancel=1 WHERE id=?', [j.id]); await log(j.id, '提交账号已停用或权限已撤销，停止后续执行。\n'); return true; }
+    const latest = await job(j.id);
+    if (stopping || latest?.cancel) return true;
+    if (!j.payload.requestedBy) return false;
+
+    const project = await get(j.payload.projectId, 'project');
+    const user = withProjectAccess(
+        await userById(j.payload.requestedBy),
+        project ? [project] : []
+    );
+    if (!mayRunJob(user, j)) {
+        await query('UPDATE jobs SET cancel=1 WHERE id=?', [j.id]);
+        await log(j.id, '提交账号已停用或权限已撤销，停止后续执行。\n');
+        return true;
+    }
     return false;
 }
 async function llm(j, system, user) {
