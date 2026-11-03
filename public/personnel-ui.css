@@ -38,3 +38,19 @@
 .org-tree .is-selected, .personnel-org .org-all.is-selected { color: #2879c7; background: #ecf5ff; font-weight: 600; }
 .org-tree .org-select:focus-visible, .org-person-button:focus-visible, .org-all:focus-visible, .org-summary:focus-visible { outline: 2px solid #409eff; outline-offset: 1px; }
 @media (max-width: 1050px) { .personnel-layout { grid-template-columns: 1fr; } .personnel-org-body { max-height: 320px; } }
+
+.member-batch { border:1px solid #dce5ef; border-radius:8px; padding:16px; margin:16px 0; min-width:0; }
+.member-batch legend { font-weight:600; padding:0 6px; }
+.member-batch select { max-width:100%; }
+.member-batch [role="status"] { color:#2563a8; margin-bottom:0; }
+
+.org-combo { position:relative; margin-bottom:16px; }
+.org-combo > label { margin-bottom:6px; }
+.org-combo-control { display:flex; align-items:stretch; }
+.org-combo-control input { flex:1; min-width:0; border-radius:6px 0 0 6px; }
+.org-combo-control > button { flex:0 0 38px; padding:0; border-radius:0 6px 6px 0; }
+.org-combo-options { position:absolute; top:100%; left:0; right:0; z-index:20; max-height:200px; overflow-y:auto; border:1px solid #dce5ef; border-radius:6px; background:#fff; box-shadow:0 6px 18px #0002; padding:4px; }
+.org-combo-options[hidden] { display:none; }
+.org-combo-options > [role="option"] { display:block; width:100%; text-align:left; white-space:normal; overflow-wrap:anywhere; border:0; background:transparent; padding:8px 10px; }
+.org-combo-options > [role="option"]:hover, .org-combo-options > [aria-selected="true"] { color:#2563a8; background:#ecf5ff; }
+.org-combo-empty { padding:8px 10px; color:#909399; font-size:13px; }

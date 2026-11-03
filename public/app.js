@@ -97,6 +97,104 @@ if (location.pathname === '/demo') {
         return `<div class="org-tree">${renderNode(buildOrganizationTree(users))}</div>`;
     }
 
+    // An explicit combobox opens on click even when the input already has a value.
+    function bindOrganizationSuggestions(users) {
+        ensurePersonnelStyles();
+        const fields = ['company', 'department', 'section'];
+        let activeField = null, activeIndex = -1;
+        const inputFor = field => modal.querySelector(`[name="${field}"]`);
+        const optionsFor = field => {
+            const parents = fields.slice(0, fields.indexOf(field));
+            const matches = users.filter(user => parents.every(parent => {
+                const value = inputFor(parent).value.trim();
+                return !value || String(user[parent] || '').trim() === value;
+            }));
+            return [...new Set(matches.map(user => String(user[field] || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+        };
+        const close = () => {
+            fields.forEach(field => {
+                inputFor(field).setAttribute('aria-expanded', 'false');
+                inputFor(field).removeAttribute('aria-activedescendant');
+                modal.querySelector(`#org-options-${field}`).hidden = true;
+            });
+            activeField = null; activeIndex = -1;
+        };
+        const show = (field, filter = '') => {
+            close(); activeField = field;
+            const input = inputFor(field), list = modal.querySelector(`#org-options-${field}`);
+            const values = optionsFor(field).filter(value => value.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase()));
+            list.innerHTML = values.length ? values.map((value, index) => `<button type="button" role="option" tabindex="-1" aria-selected="false" id="org-option-${field}-${index}" data-value="${esc(value)}">${esc(value)}</button>`).join('') : '<div class="org-combo-empty">暂无匹配组织，可直接输入</div>';
+            list.hidden = false; input.setAttribute('aria-expanded', 'true');
+            list.querySelectorAll('[role="option"]').forEach(option => {
+                option.onmousedown = event => event.preventDefault();
+                option.onclick = () => { input.value = option.dataset.value; input.dispatchEvent(new Event('input', { bubbles: true })); close(); input.focus(); };
+            });
+        };
+        fields.forEach(field => {
+            const input = inputFor(field), toggle = modal.querySelector(`#org-toggle-${field}`);
+            input.onclick = () => show(field);
+            input.oninput = () => show(field, input.value);
+            toggle.onmousedown = event => event.preventDefault();
+            toggle.onclick = () => { if (activeField === field) close(); else { input.focus(); show(field); } };
+            input.onkeydown = event => {
+                if (event.key === 'Escape' && activeField === field) { event.preventDefault(); event.stopPropagation(); close(); return; }
+                if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+                    event.preventDefault();
+                    if (activeField !== field) show(field);
+                    const options = [...modal.querySelectorAll(`#org-options-${field} [role="option"]`)];
+                    if (!options.length) return;
+                    activeIndex = activeIndex < 0 ? (event.key === 'ArrowDown' ? 0 : options.length - 1) : (activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+                    options.forEach((option, index) => option.setAttribute('aria-selected', String(index === activeIndex)));
+                    input.setAttribute('aria-activedescendant', options[activeIndex].id);
+                    options[activeIndex].scrollIntoView({ block: 'nearest' });
+                } else if (event.key === 'Enter' && activeField === field) {
+                    event.preventDefault();
+                    const option = modal.querySelectorAll(`#org-options-${field} [role="option"]`)[activeIndex];
+                    if (option) option.click(); else close();
+                } else if (event.key === 'Tab') close();
+            };
+        });
+        const form = $('#modal-form');
+        form.addEventListener('click', event => { if (!event.target.closest('.org-combo')) close(); });
+        form.addEventListener('focusin', event => { if (!event.target.closest('.org-combo') || (activeField && !event.target.closest(`#org-combo-${activeField}`))) close(); });
+    }
+
+    function memberOrganizationGroups(users) {
+        const groups = [];
+        const collect = node => {
+            if (['department', 'section'].includes(node.field)) groups.push(node);
+            node.children.forEach(collect);
+        };
+        collect(buildOrganizationTree(users));
+        return groups;
+    }
+
+    function memberBatchPanel(groups) {
+        return `<fieldset class="member-batch"><legend>按组织批量授权</legend>
+            <label>部门 / 处室<select id="member-batch-org"><option value="">请选择组织</option>${groups.map((group, index) => `<option value="${index}">${esc(group.path.map(([, name]) => name).join(' / '))}（${group.field === 'department' ? '部门' : '处室'} · ${group.users.filter(user => user.enabled && !user.owner && !user.globalAdmin).length} 人）</option>`).join('')}</select></label>
+            <label>批量项目权限<select id="member-batch-role"><option value="viewer">只读</option><option value="editor">协作者</option><option value="">无权限（移除授权）</option></select></label>
+            <button type="button" id="member-batch-apply">应用到所选组织</button>
+            <p class="quiet">部门包含下属处室。仅修改本次列表中的启用人员，所有者和平台管理员除外；可继续逐人调整，点击“保存成员权限”后生效。以后新增或调入该组织的人员需重新授权。</p>
+            <p id="member-batch-result" role="status" aria-live="polite"></p>
+        </fieldset>`;
+    }
+
+    function bindMemberBatch(groups) {
+        $('#member-batch-apply').onclick = () => {
+            const selected = $('#member-batch-org').value;
+            const group = selected === '' ? null : groups[Number(selected)];
+            if (!group) { $('#member-batch-result').textContent = '请先选择部门或处室。'; return; }
+            const permission = $('#member-batch-role').value;
+            let count = 0;
+            for (const user of group.users) {
+                if (!user.enabled || user.owner || user.globalAdmin) continue;
+                const select = [...modal.querySelectorAll('select[name^="member-"]')].find(el => el.name === 'member-' + user.id);
+                if (select && !select.disabled) { select.value = permission; count++; }
+            }
+            $('#member-batch-result').textContent = `已调整 ${count} 人为${{viewer: '只读', editor: '协作者', '': '无权限'}[permission]}，保存后生效。`;
+        };
+    }
+
     function renderPersonnelManager() {
         const users = state.users || [];
         const root = buildOrganizationTree(users);
@@ -240,21 +338,34 @@ if (location.pathname === '/demo') {
         if (a === 'job-expand' || a === 'job-collapse') { modal.querySelectorAll('.case-group').forEach(d => d.open = a === 'job-expand'); return; }
         if (a === 'password') return open('修改我的密码', '<label>原密码<input name="oldPassword" type="password" required autocomplete="current-password"></label><label>新密码<input name="password" type="password" required minlength="6" maxlength="256" autocomplete="new-password"></label><p>保存后需重新登录。</p>', async b => { await api('/me/password', 'POST', b); }, '修改密码');
         if (a === 'import-users') {
-            return open('导入人员', `<p>选择 UTF-8 CSV 文件或粘贴 CSV。表头：域账号,公司,部门,处室,姓名。每次最多 200 人。</p><pre>zhangsan,示例公司,信息管理部,质量控制处,张三</pre><label>CSV 文件<input id="personnel-file" type="file" accept=".csv,text/csv"></label><label>或粘贴 CSV<textarea name="csv" rows="6" placeholder="域账号,公司,部门,处室,姓名"></textarea></label><label>新增人员初始密码<input name="initialPassword" type="password" minlength="6" maxlength="256" autocomplete="new-password"></label><p class="quiet">新增人员默认为只读平台角色，尚无项目授权。已有域账号仅更新姓名和组织信息，保留原密码、角色和项目权限。请使用本平台独立密码，不要填写公司域密码。逐行保存并报告结果。</p>`, async b => {
+            open('导入人员', `<p>选择 UTF-8 CSV 文件或粘贴 CSV。表头：域账号,公司,部门,处室,姓名。每次最多 200 人。</p><p><button type="button" id="personnel-template">下载导入模板（CSV）</button></p><p class="quiet">先下载模板，用 Excel 等工具填写，从第 2 行开始填写真实人员；保留表头，并保存为 CSV UTF-8（逗号分隔）。域账号、姓名必填，组织字段可留空。</p><label>CSV 文件<input id="personnel-file" type="file" accept=".csv,text/csv"></label><label>或粘贴 CSV<textarea name="csv" rows="6" placeholder="域账号,公司,部门,处室,姓名"></textarea></label><label>新增人员初始密码<input name="initialPassword" type="password" minlength="6" maxlength="256" autocomplete="new-password"></label><p class="quiet">新增人员默认为只读平台角色，尚无项目授权。已有域账号仅更新姓名和组织信息，保留原密码、角色和项目权限。请使用本平台独立密码，不要填写公司域密码。逐行保存并报告结果。</p>`, async b => {
                 const file = $('#personnel-file').files[0]; if (file && file.size > 1_000_000) throw new Error('CSV 文件需小于 1MB');
                 const result = await api('/users/import', 'POST', { csv: file ? await file.text() : b.csv, initialPassword: b.initialPassword });
                 const summary = `共 ${result.total} 人，新增 ${result.created}，更新 ${result.updated}，失败 ${result.failed}。`;
                 // Show the full result after the generic submit handler has closed the import dialog.
                 setTimeout(() => open('人员导入结果', `<p>${esc(summary)}</p><pre class="analysis">${esc(result.rows.map(r => `第 ${r.line} 行 ${r.domainAccount}：${r.status}${r.error ? ' · ' + r.error : ''}`).join('\n'))}</pre>`, null), 0);
             }, '导入人员');
+            $('#personnel-template').onclick = () => {
+                const url = URL.createObjectURL(new Blob(['\uFEFF域账号,公司,部门,处室,姓名\r\n'], { type: 'text/csv;charset=utf-8' }));
+                const link = document.createElement('a');
+                link.href = url; link.download = 'TestHub-人员导入模板.csv';
+                document.body.appendChild(link); link.click(); link.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+            return;
         }
         if (a === 'project-members') {
             const data = await api('/projects/' + id + '/members');
-            return open('项目成员', `<p>所有者始终拥有全部权限。协作者可配置环境、管理计划和脚本、审核及执行；只读成员仅查看项目和报告。只有管理员及所有者可管理成员。保存后以本页显式授权为准；平台管理员始终拥有全部权限。</p>${organizationTree(data.users, u => `<div class="list-item"><div><strong>${esc(u.displayName)} · ${esc(u.domainAccount)}</strong>${u.enabled ? '' : '<p>账号已停用，保存时会移除该成员</p>'}</div>${u.owner ? '<span class="tag">所有者</span>' : u.globalAdmin ? '<span class="tag">平台管理员</span>' : `<label>项目权限<select name="member-${esc(u.id)}" aria-label="${esc(u.domainAccount)} 项目权限" ${u.enabled ? '' : 'disabled'}><option value="">无权限</option><option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>只读</option><option value="editor" ${u.role === 'editor' ? 'selected' : ''}>协作者</option></select></label>`}</div>`)}`, b => api('/projects/' + id + '/members', 'PUT', { version: data.version, members: Object.entries(b).filter(([k, v]) => k.startsWith('member-') && v).map(([k, role]) => ({ userId: k.slice(7), role })) }), '保存成员权限');
+            const groups = memberOrganizationGroups(data.users);
+            open('项目成员', `<p>所有者始终拥有全部权限。协作者可配置环境、管理计划和脚本、审核及执行；只读成员仅查看项目和报告。只有管理员及所有者可管理成员。保存后以本页显式授权为准；平台管理员始终拥有全部权限。</p>${memberBatchPanel(groups)}${organizationTree(data.users, u => `<div class="list-item"><div><strong>${esc(u.displayName)} · ${esc(u.domainAccount)}</strong>${u.enabled ? '' : '<p>账号已停用，保存时会移除该成员</p>'}</div>${u.owner ? '<span class="tag">所有者</span>' : u.globalAdmin ? '<span class="tag">平台管理员</span>' : `<label>项目权限<select name="member-${esc(u.id)}" aria-label="${esc(u.domainAccount)} 项目权限" ${u.enabled ? '' : 'disabled'}><option value="">无权限</option><option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>只读</option><option value="editor" ${u.role === 'editor' ? 'selected' : ''}>协作者</option></select></label>`}</div>`)}`, b => api('/projects/' + id + '/members', 'PUT', { version: data.version, members: Object.entries(b).filter(([k, v]) => k.startsWith('member-') && v).map(([k, role]) => ({ userId: k.slice(7), role })) }), '保存成员权限');
+            bindMemberBatch(groups);
+            return;
         }
         if (a === 'new-user' || a === 'edit-user') {
             const users = await api('/users'), u = users.find(x => x.id === id) || { role: 'tester', enabled: true, projectIds: [] };
-            return open(u.id ? '编辑账号与组织信息' : '添加账号', `<label>域账号<input name="domainAccount" required minlength="3" maxlength="64" value="${esc(u.domainAccount || u.username)}" ${u.id ? 'readonly' : ''}></label><label>姓名<input name="displayName" required maxlength="100" value="${esc(u.displayName)}"></label>${['company', 'department', 'section'].map((key, i) => `<label>${['公司', '部门', '处室'][i]}<input name="${key}" maxlength="100" value="${esc(u[key] || '')}"></label>`).join('')}<label>${u.id ? '新密码（留空保持原密码）' : '初始密码'}<input name="password" type="password" ${u.id ? '' : 'required'} minlength="6" maxlength="256" autocomplete="new-password"></label><label>平台角色<select name="role">${Object.entries(roles).map(([k, v]) => `<option value="${k}" ${k === u.role ? 'selected' : ''}>${v}</option>`).join('')}</select></label><label><input type="checkbox" name="enabled" ${u.enabled ? 'checked' : ''}>启用账号</label><p class="quiet">项目授权请在项目卡片的“项目成员”中设置。平台管理员可见全部项目；项目所有者和协作者可完成测试全流程。组织信息不自动授予项目权限。</p>`, b => api('/users' + (u.id ? '/' + u.id : ''), u.id ? 'PATCH' : 'POST', { ...b, username: b.domainAccount, enabled: b.enabled === 'on', projectIds: u.projectIds || [], version: u.updated }));
+            open(u.id ? '编辑账号与组织信息' : '添加账号', `<label>域账号<input name="domainAccount" required minlength="3" maxlength="64" value="${esc(u.domainAccount || u.username)}" ${u.id ? 'readonly' : ''}></label><label>姓名<input name="displayName" required maxlength="100" value="${esc(u.displayName)}"></label>${['company', 'department', 'section'].map((key, i) => `<div class="org-combo" id="org-combo-${key}"><label for="org-input-${key}">${['公司', '部门', '处室'][i]}</label><div class="org-combo-control"><input id="org-input-${key}" name="${key}" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="org-options-${key}" autocomplete="off" maxlength="100" placeholder="选择已有组织或手动输入" value="${esc(u[key] || '')}"><button type="button" id="org-toggle-${key}" aria-label="展开${['公司', '部门', '处室'][i]}选项" aria-controls="org-options-${key}">▾</button></div><div id="org-options-${key}" class="org-combo-options" role="listbox" aria-label="${['公司', '部门', '处室'][i]}选项" hidden></div></div>`).join('')}<label>${u.id ? '新密码（留空保持原密码）' : '初始密码'}<input name="password" type="password" ${u.id ? '' : 'required'} minlength="6" maxlength="256" autocomplete="new-password"></label><label>平台角色<select name="role">${Object.entries(roles).map(([k, v]) => `<option value="${k}" ${k === u.role ? 'selected' : ''}>${v}</option>`).join('')}</select></label><label><input type="checkbox" name="enabled" ${u.enabled ? 'checked' : ''}>启用账号</label><p class="quiet">项目授权请在项目卡片的“项目成员”中设置。平台管理员可见全部项目；项目所有者和协作者可完成测试全流程。组织信息不自动授予项目权限。</p>`, b => api('/users' + (u.id ? '/' + u.id : ''), u.id ? 'PATCH' : 'POST', { ...b, username: b.domainAccount, enabled: b.enabled === 'on', projectIds: u.projectIds || [], version: u.updated }));
+            bindOrganizationSuggestions(users);
+            return;
         }
 
         if (a === 'artifact-preview') {
