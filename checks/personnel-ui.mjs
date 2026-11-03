@@ -14,6 +14,7 @@ test('personnel organization tree promotes empty levels, indents under CSP, filt
         { id: 'u5', username: 'sectionuser', displayName: '跨级人员', company: '公司甲', department: '', section: '直接处室', role: 'viewer', enabled: true }
     ];
     const state = { me: { id: 'admin', role: 'admin', enabled: true, ownedProjectIds: ['p'], projectIds: [] }, projects: [{ id: 'p', name: '项目', ownerId: 'admin', baseURL: 'http://fixture', entry: '/', auth: false }], plans: [], suites: [], evidence: [], jobs: [], workers: [], model: { configured: false }, trash: { plans: [], suites: [] } };
+<<<<<<< HEAD
     let savedMembers = null, imported = null, edited = null;
     const memberUsers = [...users.map(u => ({ ...u, domainAccount: u.username, role: 'viewer' })), { id: 'u6', domainAccount: 'othercompany', displayName: '同名异公司', company: '公司乙', department: '信息部', section: '质控处', enabled: true, role: 'viewer' }, { id: 'u7', domainAccount: 'owner', displayName: '所有者', company: '公司甲', department: '信息部', section: '质控处', enabled: true, owner: true }, { id: 'u8', domainAccount: 'administrator', displayName: '管理员', company: '公司甲', department: '信息部', section: '质控处', enabled: true, globalAdmin: true }];
     const server = http.createServer(async (req, res) => {
@@ -26,6 +27,14 @@ test('personnel organization tree promotes empty levels, indents under CSP, filt
             if (req.url.startsWith('/api/')) {
                 res.setHeader('Content-Type', 'application/json');
                 res.end(JSON.stringify(req.url === '/api/state' ? state : req.url === '/api/users' ? users : req.url.endsWith('/members') ? { version: '1', users: memberUsers } : req.url === '/api/users/import' ? { total: 1, created: 1, updated: 0, failed: 0, rows: [{ line: 2, domainAccount: 'templateuser', status: 'created' }] } : { ok: true })); return;
+=======
+    const server = http.createServer(async (req, res) => {
+        try {
+            for await (const _ of req) { }
+            if (req.url.startsWith('/api/')) {
+                res.setHeader('Content-Type', 'application/json');
+                res.end(JSON.stringify(req.url === '/api/state' ? state : req.url === '/api/users' ? users : req.url.endsWith('/members') ? { version: '1', users: users.map(u => ({ ...u, domainAccount: u.username, role: 'viewer' })) } : { ok: true })); return;
+>>>>>>> origin/main
             }
             const file = { '/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/personnel-ui.css': 'personnel-ui.css', '/favicon.svg': 'favicon.svg' }[req.url];
             res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'");
@@ -58,6 +67,7 @@ test('personnel organization tree promotes empty levels, indents under CSP, filt
         await page.waitForResponse(r => r.url().endsWith('/api/state') && r.ok()); await expect(company).not.toHaveAttribute('open', '');
         await page.setViewportSize({ width: 850, height: 1000 }); assert.equal(await page.locator('.personnel-layout').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length), 1);
         await page.getByRole('button', { name: '项目与环境', exact: true }).click(); await page.getByRole('button', { name: '项目成员', exact: true }).click(); await expect(page.locator('#modal .org-tree')).not.toContainText('未分配'); await expect(page.locator('#modal .org-tree > .org-person')).toContainText('直属人员');
+<<<<<<< HEAD
         // Bulk authorization uses a complete organization path and saves only on submit.
         const select = account => page.getByLabel(account + ' 项目权限', { exact: true });
         await page.locator('#member-batch-apply').click(); await expect(page.locator('#member-batch-result')).toContainText('请先选择');
@@ -92,6 +102,8 @@ test('personnel organization tree promotes empty levels, indents under CSP, filt
         const downloadPromise = page.waitForEvent('download'); await page.getByRole('button', { name: '下载导入模板（CSV）' }).click(); const download = await downloadPromise;
         assert.equal(download.suggestedFilename(), 'TestHub-人员导入模板.csv'); const template = await readFile(await download.path()); assert.equal(template.subarray(0, 3).toString('hex'), 'efbbbf'); assert.equal(template.toString('utf8'), '\uFEFF域账号,公司,部门,处室,姓名\r\n');
         await page.locator('#personnel-file').setInputFiles({ name: 'filled.csv', mimeType: 'text/csv', buffer: Buffer.concat([template, Buffer.from('templateuser,公司甲,信息部,质控处,模板人员\r\n')]) }); await page.locator('[name=initialPassword]').fill('123456'); await page.locator('.modal-footer').getByRole('button', { name: '导入人员', exact: true }).click(); await page.getByRole('heading', { name: '人员导入结果' }).waitFor(); assert.ok(imported.csv.includes('templateuser,公司甲,信息部,质控处,模板人员')); assert.equal(imported.initialPassword, '123456');
+=======
+>>>>>>> origin/main
         assert.deepEqual(errors, []);
     } finally { await browser.close(); await new Promise(r => server.close(r)); }
 });
